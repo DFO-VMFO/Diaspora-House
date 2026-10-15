@@ -1,0 +1,24 @@
+{
+ "entityKeys": {"members":"ops:members","requests":"ops:requests","applications":"ops:applications","circles":"ops:circles","spaces":"ops:spaces","events":"ops:events","rsvps":"ops:rsvps","bookings":"ops:bookings","vendors":"ops:souk_vendors","reservations":"ops:souk_reservations","classes":"ops:academy_classes","enrollments":"ops:enrollments","talent":"ops:talent_directory","tables":"ops:language_tables","locations":"ops:locations","activity":"ops:activity_log"},
+ "views": ["dashboard","schedule","requests","members","applications","circles","spaces","events","bookings","vendors","reservations","classes","talent","tables","locations"],
+ "roles": {
+  "ceo":        {"label":"CEO","blurb":"Sees and edits everything. Can view the app as any role.","views":"*","reads":"*","write":"*"},
+  "concierge":  {"label":"Concierge","blurb":"Answers member requests, runs room bookings and event check-in.","views":["dashboard","schedule","requests","members","bookings","spaces","events","talent"],"reads":["requests","members","bookings","spaces","events","rsvps","talent","locations"],"write":["requests","bookings","rsvps"]},
+  "membership": {"label":"Membership Lead","blurb":"Runs admissions, member records and Capital Circles.","views":["dashboard","requests","members","applications","circles"],"reads":["requests","members","applications","circles","events"],"write":["members","applications","circles"]},
+  "programming":{"label":"Programming","blurb":"Events, rooms, circles, language tables and talent.","views":["dashboard","schedule","events","spaces","bookings","circles","tables","talent","locations"],"reads":["events","rsvps","spaces","bookings","circles","tables","talent","locations","members"],"write":["events","spaces","bookings","circles","tables","talent","rsvps","locations"]},
+  "commerce":   {"label":"Souk & Academy","blurb":"Vendors, stock, reservations, classes and rosters.","views":["dashboard","vendors","reservations","classes"],"reads":["vendors","reservations","classes","enrollments"],"write":["vendors","reservations","classes","enrollments"]},
+  "housekeeping":{"label":"Housekeeping","blurb":"Sees which rooms are booked and when, to prepare and reset them. Cannot see members or requests.","views":["schedule","spaces","bookings","events"],"reads":["spaces","bookings","events","locations"],"write":[]},
+  "frontdesk":  {"label":"Front Desk","blurb":"Greets guests and checks people in to events.","views":["schedule","events","bookings","members","spaces"],"reads":["events","rsvps","bookings","members","spaces"],"write":["rsvps"]},
+  "auditor":    {"label":"Read-only auditor","blurb":"Can look at every screen. Cannot change anything.","views":"*","reads":"*","write":[]}
+ },
+ "team": [
+  {"role":"ceo","name":"Brandon","title":"CEO","email":"brandon@diasporafamilyoffice.com"},
+  {"role":"concierge","name":"Folake Adeyemi","title":"Head Concierge","email":"concierge@house.diaspora.test"},
+  {"role":"membership","name":"Kwabena Osei","title":"Membership Lead","email":"membership@house.diaspora.test"},
+  {"role":"programming","name":"Ngozi Eze","title":"Programming Director","email":"programming@house.diaspora.test"},
+  {"role":"commerce","name":"Amina Diallo","title":"Souk & Academy Manager","email":"commerce@house.diaspora.test"},
+  {"role":"housekeeping","name":"Grace Mwangi","title":"Housekeeping Lead","email":"housekeeping@house.diaspora.test"},
+  {"role":"frontdesk","name":"Tunde Bello","title":"Front Desk Host","email":"frontdesk@house.diaspora.test"},
+  {"role":"auditor","name":"Sipho Ndlovu","title":"Compliance Reviewer","email":"auditor@house.diaspora.test"}
+ ]
+}
