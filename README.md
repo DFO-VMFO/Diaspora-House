@@ -27,4 +27,12 @@ Push to `main`; the workflow publishes to GitHub Pages (Settings, Pages, Source:
 
 ## Members (build #4)
 - **Profile:** click a member's name (or the people icon) for a profile with details, Capital Profile, and activity across requests, rooms, Souk, events, classes and service jobs.
-- **Dues:** the CEO, Membership Lead and Auditor see dues. Per member: tracking start month, a payment ledger (amount, date, method, note), and a status of Paid up, Due now, Past due or Not tracking. Dues are due on the 1st with a grace period to the 10th. Comped and paused members are set in the member form. Past-due members show on the dashboard. Payments are recorded by hand for now; card billing through Stripe is a later step.
+- **Dues:** the CEO, Membership Lead and Auditor see dues. Per member: tracking start month, a payment ledger (amount, date, method, note), and a status of Paid up, Due now, Past due or Not tracking. Dues are due on the 1st with a grace period to the 10th. Comped and paused members are set in the member form. Past-due members show on the dashboard. Payments are recorded by hand for now; card billing through Stripe is a later step. Dues live in their own store (`ops:member_dues`), readable only by the CEO, Membership Lead and Auditor, so other staff cannot see who owes what.
+
+## Events: ticket sales and check-in (build #5)
+- Turn on **Sell tickets online** on an event (it needs a ticket price and capacity), then use the send icon on the Events row to copy the public link (`/tickets/?e=<event id>`).
+- Buyers pay through Stripe Checkout (`create-checkout`). The signed Stripe webhook (`stripe-webhook`) records the order under `ops:ticket_orders` and emails the buyer a confirmation with an 8-character door code. Seats left = capacity - held - app RSVPs - tickets sold. If two buyers race for the last seats, the later order is flagged **needs review** and the CEO is emailed.
+- The attendance screen has a ticket-holder list with search, check in one or all, undo, adding door and comp guests, and CEO-only Mark refunded. Refund the card in Stripe separately.
+- Ticket revenue flows into each house's revenue and profit automatically.
+- **Stripe is in sandbox (test) mode.** Going live means a live webhook endpoint plus swapping the secret key, nothing else.
+- Setup: the edge function secret `STRIPE_SECRET_KEY` must be set (Supabase, Edge Functions, Secrets). The webhook signing secret is already stored.

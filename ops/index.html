@@ -237,7 +237,7 @@ td.num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-dim
 window.DH_CONFIG = window.DH_CONFIG || {supabaseUrl:'https://eptsqnvenmllmzshigoi.supabase.co', supabaseKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwdHNxbnZlbm1sbG16c2hpZ29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwMDM2NjIsImV4cCI6MjEwNzU3OTY2Mn0.OXqgEbP29xHd_PpCHPa57WGoqwi3Xi_jwWIvem0cT5o', requireLogin:true};
 const DH_DB = (function(){
   const LS = 'dh_sb', LSS = 'dh_session';
-  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:job_responses'];
+  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:job_responses','ops:ticket_orders','ops:member_dues'];
   const db = {status:'off', lastError:'', KEYS, profile:null, onAuthLost:null};
   let underlying = window.storage;
   const mem = {};
@@ -495,7 +495,7 @@ function dbAction(action){
   if(action==='db-reseed'){
     if(!window.confirm('Replace ALL shared data (members, budgets, providers, everything) with the built-in sample data? Anything you entered will be lost.')) return true;
     dbSay('Resetting…');
-    (async()=>{ try{ for(const e of ENTITY_ORDER){ if(e==='rsvps') continue; state.data[e] = JSON.parse(JSON.stringify(SEED[e]||[])); await storageSet(STORAGE_KEYS[e], state.data[e]); } dbSay('Done. Sample data restored.', true); render(); }catch(err){ dbSay('Reset failed: '+(err&&err.message||err), false); } })();
+    (async()=>{ try{ for(const e of ENTITY_ORDER){ if(e==='rsvps'||e==='tickets') continue; state.data[e] = JSON.parse(JSON.stringify(SEED[e]||[])); await storageSet(STORAGE_KEYS[e], state.data[e]); } dbSay('Done. Sample data restored.', true); render(); }catch(err){ dbSay('Reset failed: '+(err&&err.message||err), false); } })();
     return true;
   }
   if(action==='db-signout'){ DH_DB.signOut().then(()=>{ try{ location.reload(); }catch(e){} }); return true; }
@@ -566,7 +566,7 @@ const STORAGE_KEYS = {
   members:'ops:members', spaces:'ops:spaces', events:'ops:events', vendors:'ops:souk_vendors',
   classes:'ops:academy_classes', talent:'ops:talent_directory', tables:'ops:language_tables', locations:'ops:locations',
   applications:'ops:applications', circles:'ops:circles', requests:'ops:requests', bookings:'ops:bookings', rsvps:'ops:rsvps', reservations:'ops:souk_reservations', enrollments:'ops:enrollments',
-  providers:'ops:providers', jobs:'ops:jobs', budgets:'ops:budgets',
+  providers:'ops:providers', jobs:'ops:jobs', budgets:'ops:budgets', tickets:'ops:ticket_orders', dues:'ops:member_dues',
   inventory:'ops:inventory', roster:'ops:roster', shifts:'ops:shifts', revenue:'ops:revenue',
 };
 const ACTIVITY_KEY = 'ops:activity_log';
@@ -577,12 +577,12 @@ const STAFF_ROLE_KEY = 'ops:staff_role';
 const ALL_VIEWS = ["dashboard", "schedule", "requests", "members", "applications", "circles", "spaces", "events", "bookings", "vendors", "reservations", "classes", "talent", "tables", "locations", "jobs", "providers", "budgets", "inventory", "roster", "shifts", "revenue"];
 const ROLES = {
   ceo: {label:"CEO", blurb:"Sees and edits everything. Can view the app as any role.", views:ALL_VIEWS, reads:"*", write:"*"},
-  concierge: {label:"Concierge", blurb:"Answers member requests, runs room bookings and event check-in.", views:["dashboard", "schedule", "requests", "members", "bookings", "spaces", "events", "talent"], reads:["requests", "members", "bookings", "spaces", "events", "rsvps", "talent", "locations"], write:["requests", "bookings", "rsvps"]},
-  membership: {label:"Membership Lead", blurb:"Runs admissions, member records and Capital Circles.", views:["dashboard", "requests", "members", "applications", "circles"], reads:["requests", "members", "applications", "circles", "events"], write:["members", "applications", "circles"]},
-  programming: {label:"Programming", blurb:"Events, rooms, circles, language tables and talent.", views:["dashboard", "schedule", "events", "spaces", "bookings", "circles", "tables", "talent", "locations"], reads:["events", "rsvps", "spaces", "bookings", "circles", "tables", "talent", "locations", "members"], write:["events", "spaces", "bookings", "circles", "tables", "talent", "rsvps", "locations"]},
+  concierge: {label:"Concierge", blurb:"Answers member requests, runs room bookings and event check-in.", views:["dashboard", "schedule", "requests", "members", "bookings", "spaces", "events", "talent"], reads:["requests", "members", "bookings", "spaces", "events", "rsvps", "talent", "locations", "tickets"], write:["requests", "bookings", "rsvps", "tickets"]},
+  membership: {label:"Membership Lead", blurb:"Runs admissions, member records and Capital Circles.", views:["dashboard", "requests", "members", "applications", "circles"], reads:["requests", "members", "applications", "circles", "events", "dues"], write:["members", "applications", "circles", "dues"]},
+  programming: {label:"Programming", blurb:"Events, rooms, circles, language tables and talent.", views:["dashboard", "schedule", "events", "spaces", "bookings", "circles", "tables", "talent", "locations"], reads:["events", "rsvps", "spaces", "bookings", "circles", "tables", "talent", "locations", "members", "tickets"], write:["events", "spaces", "bookings", "circles", "tables", "talent", "rsvps", "locations", "tickets"]},
   commerce: {label:"Souk & Academy", blurb:"Vendors, stock, reservations, classes and rosters.", views:["dashboard", "vendors", "reservations", "classes"], reads:["vendors", "reservations", "classes", "enrollments"], write:["vendors", "reservations", "classes", "enrollments"]},
   housekeeping: {label:"Housekeeping", blurb:"Sees which rooms are booked and when, to prepare and reset them. Cannot see members or requests.", views:["schedule", "spaces", "bookings", "events"], reads:["spaces", "bookings", "events", "locations"], write:[]},
-  frontdesk: {label:"Front Desk", blurb:"Greets guests and checks people in to events.", views:["schedule", "events", "bookings", "members", "spaces"], reads:["events", "rsvps", "bookings", "members", "spaces"], write:["rsvps"]},
+  frontdesk: {label:"Front Desk", blurb:"Greets guests and checks people in to events.", views:["schedule", "events", "bookings", "members", "spaces"], reads:["events", "rsvps", "bookings", "members", "spaces", "tickets"], write:["rsvps", "tickets"]},
   auditor: {label:"Read-only auditor", blurb:"Can look at every screen. Cannot change anything.", views:ALL_VIEWS, reads:"*", write:[]},
 };
 const WRITE_ACTIONS = new Set(['add-product','admit-application','advance-application','claim-request','complete-request','confirm-delete','cycle-status','decline-application','duplicate-entity','open-delete','open-edit','remove-enrollment','remove-product','remove-rsvp','save-entity','toggle-checkin']);
@@ -699,7 +699,7 @@ const SEED = {
 
 /* ---------------- Entity schemas ---------------- */
 const TIME_SLOTS = ['9:00 AM','11:00 AM','1:00 PM','3:30 PM','6:00 PM','8:00 PM'];
-const SHARED_ENTITIES = ['requests','bookings','rsvps','reservations','enrollments'];
+const SHARED_ENTITIES = ['requests','bookings','rsvps','reservations','enrollments','tickets'];
 function reservedQty(pid){ return (state.data.reservations||[]).filter(r=>r.productId===pid && ['reserved','fulfilled'].includes(r.status)).reduce((s,r)=>s+(r.qty||1),0); }
 function availStock(p){ return Math.max(0, (p.stock||0) - reservedQty(p.id)); }
 function enrollCount(cid){ return (state.data.enrollments||[]).filter(e=>e.classId===cid && e.status==='enrolled').length; }
@@ -900,6 +900,7 @@ const SCHEMAS = {
       {header:'When', sortKey:'date', render:e=>`${esc(e.date||'—')} ${esc(e.time||'')}`},
       {header:'Capacity', sortKey:'capacity', render:e=>`${e.capacity||0} (${e.held||0} held)`, num:true},
       {header:'App RSVPs', render:e=>{ const s=eventRsvpStats(e.id); return `${s.seats} seat${s.seats===1?'':'s'}${s.waitlist?` · ${s.waitlist} waiting`:''}<div class="rowsub">${s.checkedIn} checked in</div>`; }, num:true},
+      {header:'Tickets', render:e=>ticketCell(e), num:true},
       {header:'Status', sortKey:'status', render:e=>badge('events', e.id, e.status==='cancelled'?'flagged':'active', e.status||'scheduled')},
     ],
     searchFields:['name','category','room'],
@@ -1406,6 +1407,7 @@ computeInsights = function(){
     else if(j.status==='offered' && j.responseDueAt && new Date(j.responseDueAt).getTime()-Date.now() < 30*60000) a.push({level:'warn', text:`Waiting on ${j.providerName} to reply: ${j.summary}`, view:'jobs'});
     else if(['new','offered'].includes(j.status) && p && leadWarning(j,p)) a.push({level:'warn', text:`Short notice for ${p.name}: ${j.summary}`, view:'jobs'});
   });
+  (state.data.tickets||[]).filter(o=>o.status==='review').forEach(o=>{ const ev=(state.data.events||[]).find(x=>x.id===o.eventId); a.unshift({level:'bad', text:`Ticket order needs review: ${o.name||'guest'} (${o.qty} for ${ev?ev.name:'an event'})`, view:'events'}); });
   if(canSeeDues()){
     const late=(state.data.members||[]).filter(m=>duesInfo(m).state==='pastdue');
     if(late.length){ const tot=late.reduce((t,m)=>t+duesInfo(m).balance,0); a.push({level:'warn', text:`${late.length} member${late.length>1?'s are':' is'} past due on dues (${money(tot)})`, view:'members'}); }
@@ -2189,31 +2191,84 @@ function dhFinanceAction(action, el){
 REV_CATEGORIES.splice(1,1,'Event Tickets','Sponsorships');
 const DEFAULT_DUES = {'Founding 50':1500, 'Standard':500};
 
+
+/* ---- online tickets: sales, door list and check-in ---- */
+function ticketOrders(e){ return (state.data.tickets||[]).filter(o=>o.eventId===e.id && ['paid','review'].includes(o.status)); }
+function ticketStats(e){ const os=ticketOrders(e); return {sold:os.reduce((t,o)=>t+(Number(o.qty)||0),0), rev:os.reduce((t,o)=>t+(Number(o.amount)||0),0), inn:os.reduce((t,o)=>t+(Number(o.checkedIn)||0),0), review:os.filter(o=>o.status==='review').length}; }
+function ticketCell(e){ const t=ticketStats(e); if(!e.onSale && !t.sold) return '<span style="color:var(--text-faint);">—</span>'; return `${t.sold} sold${t.rev?' · '+money(t.rev):''}<div class="rowsub">${e.onSale?'on sale':'off sale'} · ${t.inn} in${t.review?' · <span style="color:var(--bad);">'+t.review+' to review</span>':''}</div>`; }
+function ticketLink(e){ try{ return new URL('../tickets/?e='+encodeURIComponent(e.id), location.href).href; }catch(x){ return ''; } }
+function tkFilter(v){ v=String(v||'').toLowerCase(); document.querySelectorAll('[data-tk]').forEach(r=>{ r.style.display = r.dataset.tk.includes(v)?'':'none'; }); }
+function ticketHolderHTML(ev){
+  if(!ev) return '';
+  const can=canWrite('tickets'), owner=isOwner();
+  const orders=(state.data.tickets||[]).filter(o=>o.eventId===ev.id && o.status!=='refunded').sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  const tot=orders.reduce((t,o)=>t+(Number(o.qty)||0),0), inn=orders.reduce((t,o)=>t+(Number(o.checkedIn)||0),0);
+  const btn=(a,id,label,cls)=>`<button class="btn ${cls||'btn-ghost'} btn-sm" data-action="${a}" data-id="${esc(id)}">${label}</button>`;
+  const rows=orders.map(o=>{ const q=Number(o.qty)||1, c=Number(o.checkedIn)||0;
+    return `<div class="alert-row" style="gap:10px;flex-wrap:wrap;" data-tk="${esc(((o.name||'')+' '+(o.email||'')+' '+(o.code||'')).toLowerCase())}">
+      <span style="flex:1;min-width:160px;"><span style="color:var(--text);">${esc(o.name||'Guest')}</span> <span class="mono" style="color:var(--text-faint);">${esc(o.code||'')}</span><br><span style="color:var(--text-faint);font-size:11px;">${q} ticket${q===1?'':'s'} · ${o.source==='door'?'door':'online'}${o.amount?' · '+money(o.amount):' · comp'}${o.email?' · '+esc(o.email):''}${o.status==='review'?' · <span style="color:var(--bad);">needs review: may be oversold</span>':''}</span></span>
+      ${can&&o.status==='paid'?`<span style="display:flex;gap:6px;align-items:center;">${c>0?btn('tk-out',o.id,'−'):''}<span class="mono" style="font-size:11.5px;">${c}/${q}</span>${c<q?btn('tk-in',o.id,'Check in','btn-primary'):''}${q-c>1?btn('tk-all',o.id,'All'):''}</span>`:`<span class="mono" style="font-size:11.5px;">${c}/${q}</span>`}
+      ${owner&&o.status==='review'?btn('tk-approve',o.id,'Keep order'):''}${owner&&o.source!=='door'?btn('tk-refund',o.id,'Mark refunded'):''}
+    </div>`; }).join('');
+  const add = can ? `<div style="border:1px dashed var(--line);border-radius:8px;padding:10px;margin:10px 0 14px;"><div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px;"><div class="field" style="margin:0;"><label>Add a guest (door or comp)</label><input type="text" id="tk-name" placeholder="Name"></div><div class="field" style="margin:0;"><label>Tickets</label><input type="number" id="tk-qty" value="1" min="1"></div><div class="field" style="margin:0;"><label>Paid ($)</label><input type="number" id="tk-paid" value="0" min="0"></div></div><button class="btn btn-ghost btn-sm" style="margin-top:8px;" data-action="tk-add" data-id="${esc(ev.id)}">Add to list</button></div>` : '';
+  return `<div class="modal-head" style="margin:6px 0 6px;"><h3 style="font-size:13px;">Ticket holders · ${inn} of ${tot} checked in</h3></div>
+    ${orders.length>6?`<input type="text" placeholder="Find by name, email or code" oninput="tkFilter(this.value)" style="width:100%;margin-bottom:8px;">`:''}
+    ${rows||'<div class="empty" style="padding:8px 0;">No tickets sold or added yet.</div>'}${add}
+    <div class="modal-head" style="margin:14px 0 6px;"><h3 style="font-size:13px;">Member RSVPs from the app</h3></div>`;
+}
+['tk-in','tk-out','tk-all','tk-add','tk-approve','tk-refund'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='tickets'; });
+function dhTicketAction(action, el){
+  if(action==='copy-ticket-link'){
+    const e=(state.data.events||[]).find(x=>x.id===el.dataset.id); if(!e) return true;
+    if(!e.onSale){ toast('Switch on "Sell tickets online" for this event first.'); return true; }
+    const u=ticketLink(e); (navigator.clipboard?navigator.clipboard.writeText(u):Promise.reject()).then(()=>toast('Ticket link copied.'),()=>window.prompt('Copy this ticket link:',u)); return true;
+  }
+  if(!['tk-in','tk-out','tk-all','tk-add','tk-approve','tk-refund'].includes(action)) return false;
+  if(action==='tk-add'){
+    const name=document.getElementById('tk-name').value.trim(); if(!name){ toast('Enter the guest name.'); return true; }
+    const qty=Math.max(1,Math.floor(Number(document.getElementById('tk-qty').value)||1)), paid=Math.max(0,Number(document.getElementById('tk-paid').value)||0);
+    const now=new Date().toISOString();
+    (state.data.tickets=state.data.tickets||[]).push({id:uid('tk'), eventId:el.dataset.id, qty, amount:paid, name, email:'', code:Math.random().toString(36).slice(2,8).toUpperCase(), status:'paid', checkedIn:0, source:'door', createdAt:now, updatedAt:now, by:state.staffName||'Staff'});
+    persist('tickets'); logActivity('added','tickets',`${name} added to the guest list (${qty})`); render(); return true;
+  }
+  const o=(state.data.tickets||[]).find(x=>x.id===el.dataset.id); if(!o) return true;
+  const q=Number(o.qty)||1, c=Number(o.checkedIn)||0;
+  if(action==='tk-in') o.checkedIn=Math.min(q,c+1);
+  else if(action==='tk-out') o.checkedIn=Math.max(0,c-1);
+  else if(action==='tk-all') o.checkedIn=q;
+  else if(!isOwner()){ toast('Only the CEO can change order status.'); return true; }
+  else if(action==='tk-approve') o.status='paid';
+  else if(action==='tk-refund'){ if(!window.confirm('Mark this order refunded? Refund the card in Stripe separately; this only updates the door list and revenue.')) return true; o.status='refunded'; }
+  touch(o); persist('tickets'); if(['tk-in','tk-all'].includes(action)) logActivity('updated','tickets',`${o.name} checked in (${o.checkedIn}/${q})`); render(); return true;
+}
+
 /* ---- member dues, billing status and profile ---- */
 const DUES_GRACE_DAY = 10;
 const PAY_METHODS = ['Card','Bank transfer','Check','Cash','Other'];
-function canSeeDues(){ return ['ceo','membership','auditor'].includes(state.role); }
+function canSeeDues(){ const r=curRole().reads; return r==='*' || r.includes('dues'); }
 function memberDues(m){ return Number(m.monthlyDues)||DEFAULT_DUES[m.tier]||0; }
 function ymOf(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
 function ymAdd(ym,n){ const a=ym.split('-').map(Number); return ymOf(new Date(a[0],a[1]-1+n,1)); }
 function ymLabel(ym){ const a=ym.split('-').map(Number); return new Date(a[0],a[1]-1,1).toLocaleDateString([], {month:'short',year:'numeric'}); }
 function ymDiff(a,b){ const x=a.split('-').map(Number), y=b.split('-').map(Number); return (y[0]-x[0])*12+y[1]-x[1]; }
+function duesRec(m){ return (state.data.dues||[]).find(r=>r.memberId===m.id)||null; }
 function duesInfo(m){
   const amt=memberDues(m);
   if(m.status!=='active') return {state:'inactive'};
   if(m.duesMode==='comped') return {state:'comped'};
   if(m.duesMode==='paused') return {state:'paused'};
   if(!amt) return {state:'none'};
-  const paidTotal=(m.payments||[]).reduce((t,x)=>t+(Number(x.amount)||0),0);
-  if(!m.billingStart) return {state:'untracked', amt, paidTotal};
+  const rec=duesRec(m)||{}; const paidTotal=(rec.payments||[]).reduce((t,x)=>t+(Number(x.amount)||0),0);
+  if(!rec.billingStart) return {state:'untracked', amt, paidTotal};
   const today=new Date(), cur=ymOf(today);
-  const n=Math.max(0, ymDiff(m.billingStart,cur)+1);
+  const n=Math.max(0, ymDiff(rec.billingStart,cur)+1);
   const dueMonths = today.getDate()>DUES_GRACE_DAY ? n : Math.max(0,n-1);
   const balance = dueMonths*amt-paidTotal;
   const covered=Math.floor((paidTotal+0.5)/amt);
   const st = balance>0.5 ? 'pastdue' : (covered>=n ? 'paid' : 'current');
-  return {state:st, amt, paidTotal, balance:Math.max(0,balance), monthsBehind:Math.ceil(Math.max(0,balance)/amt), paidThrough:covered>0?ymAdd(m.billingStart,covered-1):null, nextDue:ymAdd(m.billingStart,covered), billedMonths:n};
+  return {state:st, amt, paidTotal, balance:Math.max(0,balance), monthsBehind:Math.ceil(Math.max(0,balance)/amt), paidThrough:covered>0?ymAdd(rec.billingStart,covered-1):null, nextDue:ymAdd(rec.billingStart,covered), billedMonths:n};
 }
+function duesEnsure(m){ let r=duesRec(m); if(!r){ r={id:'due-'+m.id, memberId:m.id, billingStart:'', payments:[]}; (state.data.dues=state.data.dues||[]).push(r); } return r; }
 function duesCell(m){
   const d=duesInfo(m), dim='<span style="color:var(--text-faint);">';
   if(d.state==='pastdue') return `<span style="color:var(--bad);">Past due ${money(d.balance)}</span><div class="rowsub">${d.monthsBehind} mo behind</div>`;
@@ -2228,15 +2283,15 @@ function memberModalHTML(){
   const m=(state.data.members||[]).find(x=>x.id===state.modal.id); if(!m) return '';
   const fact=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px;"><span style="color:var(--text-faint);">${k}</span><span style="text-align:right;">${v||'—'}</span></div>`;
   const head=t=>`<div class="modal-head" style="margin:14px 0 4px;"><h3 style="font-size:13px;">${t}</h3></div>`;
-  const can=canWrite('members');
+  const can=canWrite('members'), canD=canWrite('dues');
   let dues='';
   if(canSeeDues()){
-    const d=duesInfo(m), pays=(m.payments||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const d=duesInfo(m), pays=((duesRec(m)||{}).payments||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
     const label={pastdue:`<span style="color:var(--bad);">Past due ${money(d.balance)} (${d.monthsBehind} month${d.monthsBehind===1?'':'s'})</span>`, paid:`<span style="color:var(--good);">Paid up through ${d.paidThrough?ymLabel(d.paidThrough):''}</span>`, current:`<span style="color:var(--warn);">${d.nextDue?ymLabel(d.nextDue):''} dues open</span>`, untracked:'Not tracking yet', comped:'Comped, no dues', paused:'Billing paused', none:'No dues set for this tier', inactive:'Not an active member'}[d.state];
-    dues=head('Dues and billing')+`<div>${fact('Status',label)}${fact('Monthly dues',memberDues(m)?money(memberDues(m)):'')}${m.billingStart?fact('Billing since',ymLabel(m.billingStart)):''}${fact('Total received',money(d.paidTotal||0))}</div>`;
-    if(can && ['untracked'].includes(d.state)) dues+=`<div style="display:flex;gap:8px;align-items:end;margin-top:10px;"><div class="field" style="margin:0;flex:1;"><label>Start tracking from</label><input type="month" id="bill-start" value="${ymOf(new Date())}"></div><button class="btn btn-primary btn-sm" data-action="member-start-billing" data-id="${esc(m.id)}">Start tracking</button></div><div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-top:6px;">Pick the first month you want dues counted from, so older months do not show as past due.</div>`;
-    if(can && ['pastdue','current','paid'].includes(d.state)) dues+=`<div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:10px;"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;"><div class="field" style="margin:0;"><label>Amount ($)</label><input type="number" id="pay-amount" value="${d.amt}"></div><div class="field" style="margin:0;"><label>Received</label><input type="date" id="pay-date" value="${localISO(new Date())}"></div><div class="field" style="margin:0;"><label>Method</label><select id="pay-method">${PAY_METHODS.map(x=>`<option>${x}</option>`).join('')}</select></div></div><div class="field" style="margin:10px 0;"><label>Note (optional)</label><input type="text" id="pay-note" placeholder="Invoice, check number, etc."></div><button class="btn btn-primary btn-sm" data-action="member-record-payment" data-id="${esc(m.id)}">${ICON.check}<span>Record payment</span></button></div>`;
-    dues+= pays.length ? `<div style="margin-top:10px;">${pays.slice(0,12).map(x=>`<div class="activity-row"><span>${money(x.amount)} · ${esc(x.method||'')}${x.note?' · '+esc(x.note):''}</span><span class="when">${esc(x.date)}${can?` <span data-action="member-delete-payment" data-id="${esc(m.id)}" data-pay="${esc(x.id)}" style="margin-left:8px;color:var(--text-faint);cursor:pointer;text-decoration:underline;">remove</span>`:''}</span></div>`).join('')}${pays.length>12?`<div class="mono" style="font-size:10.5px;color:var(--text-faint);">${pays.length-12} older payments not shown</div>`:''}</div>` : '';
+    dues=head('Dues and billing')+`<div>${fact('Status',label)}${fact('Monthly dues',memberDues(m)?money(memberDues(m)):'')}${(duesRec(m)||{}).billingStart?fact('Billing since',ymLabel(duesRec(m).billingStart)):''}${fact('Total received',money(d.paidTotal||0))}</div>`;
+    if(canD && ['untracked'].includes(d.state)) dues+=`<div style="display:flex;gap:8px;align-items:end;margin-top:10px;"><div class="field" style="margin:0;flex:1;"><label>Start tracking from</label><input type="month" id="bill-start" value="${ymOf(new Date())}"></div><button class="btn btn-primary btn-sm" data-action="member-start-billing" data-id="${esc(m.id)}">Start tracking</button></div><div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-top:6px;">Pick the first month you want dues counted from, so older months do not show as past due.</div>`;
+    if(canD && ['pastdue','current','paid'].includes(d.state)) dues+=`<div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:10px;"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;"><div class="field" style="margin:0;"><label>Amount ($)</label><input type="number" id="pay-amount" value="${d.amt}"></div><div class="field" style="margin:0;"><label>Received</label><input type="date" id="pay-date" value="${localISO(new Date())}"></div><div class="field" style="margin:0;"><label>Method</label><select id="pay-method">${PAY_METHODS.map(x=>`<option>${x}</option>`).join('')}</select></div></div><div class="field" style="margin:10px 0;"><label>Note (optional)</label><input type="text" id="pay-note" placeholder="Invoice, check number, etc."></div><button class="btn btn-primary btn-sm" data-action="member-record-payment" data-id="${esc(m.id)}">${ICON.check}<span>Record payment</span></button></div>`;
+    dues+= pays.length ? `<div style="margin-top:10px;">${pays.slice(0,12).map(x=>`<div class="activity-row"><span>${money(x.amount)} · ${esc(x.method||'')}${x.note?' · '+esc(x.note):''}</span><span class="when">${esc(x.date)}${canD?` <span data-action="member-delete-payment" data-id="${esc(m.id)}" data-pay="${esc(x.id)}" style="margin-left:8px;color:var(--text-faint);cursor:pointer;text-decoration:underline;">remove</span>`:''}</span></div>`).join('')}${pays.length>12?`<div class="mono" style="font-size:10.5px;color:var(--text-faint);">${pays.length-12} older payments not shown</div>`:''}</div>` : '';
   }
   const evName=id=>{ const e=(state.data.events||[]).find(x=>x.id===id); return e?e.name:'Event'; };
   const clName=id=>{ const c=(state.data.classes||[]).find(x=>x.id===id); return c?c.name:'Class'; };
@@ -2261,7 +2316,7 @@ function memberModalHTML(){
       </div>
     </div>`;
 }
-['member-start-billing','member-record-payment','member-delete-payment'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='members'; });
+['member-start-billing','member-record-payment','member-delete-payment'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='dues'; });
 function dhMemberAction(action, el){
   if(action==='open-member'){ state.modal={type:'member', id:el.dataset.id}; renderModal(); return true; }
   if(!['member-start-billing','member-record-payment','member-delete-payment'].includes(action)) return false;
@@ -2269,16 +2324,16 @@ function dhMemberAction(action, el){
   if(!canSeeDues()){ toast('Only the CEO, Membership Lead and Auditor see dues.'); return true; }
   if(action==='member-start-billing'){
     const v=document.getElementById('bill-start').value; if(!/^\d{4}-\d{2}$/.test(v)){ toast('Pick a month.'); return true; }
-    m.billingStart=v; touch(m); persist('members'); logActivity('updated','members',`${m.name}: dues tracking from ${ymLabel(v)}`); render(); return true;
+    const rec=duesEnsure(m); rec.billingStart=v; touch(rec); persist('dues'); logActivity('updated','members',`${m.name}: dues tracking from ${ymLabel(v)}`); render(); return true;
   }
   if(action==='member-record-payment'){
     const amount=Number(document.getElementById('pay-amount').value)||0; if(amount<=0){ toast('Enter the amount received.'); return true; }
     const date=document.getElementById('pay-date').value||localISO(new Date());
-    (m.payments=m.payments||[]).push({id:uid('pay'), amount, date, method:document.getElementById('pay-method').value, note:document.getElementById('pay-note').value.trim(), by:state.staffName||'Staff'});
-    touch(m); persist('members'); logActivity('updated','members',`${m.name}: ${money(amount)} dues received`); toast('Payment recorded.'); render(); return true;
+    const rec=duesEnsure(m); (rec.payments=rec.payments||[]).push({id:uid('pay'), amount, date, method:document.getElementById('pay-method').value, note:document.getElementById('pay-note').value.trim(), by:state.staffName||'Staff'});
+    touch(rec); persist('dues'); logActivity('updated','members',`${m.name}: ${money(amount)} dues received`); toast('Payment recorded.'); render(); return true;
   }
   if(!window.confirm('Remove this payment record?')) return true;
-  m.payments=(m.payments||[]).filter(x=>x.id!==el.dataset.pay); touch(m); persist('members'); logActivity('updated','members',`${m.name}: payment record removed`); render(); return true;
+  const rec=duesEnsure(m); rec.payments=(rec.payments||[]).filter(x=>x.id!==el.dataset.pay); touch(rec); persist('dues'); logActivity('updated','members',`${m.name}: payment record removed`); render(); return true;
 }
 
 SCHEMAS.members.fields.push(
@@ -2289,7 +2344,8 @@ SCHEMAS.members.columns[0].render = m=>`<div class="rowtitle" data-action="open-
 SCHEMAS.members.columns.splice(3,0,{header:'Dues', render:m=>canSeeDues()?duesCell(m):'<span style="color:var(--text-faint);">—</span>'});
 SCHEMAS.events.fields.push(
   {key:'location', label:'House / location', type:'select', options:()=>['—',...cityOptions()]},
-  {key:'ticketPrice', label:'Ticket price per seat ($)', type:'number'});
+  {key:'ticketPrice', label:'Ticket price per seat ($)', type:'number'},
+  {key:'onSale', label:'Sell tickets online (needs a price and capacity)', type:'checkbox'});
 SCHEMAS.revenue.fields.splice(SCHEMAS.revenue.fields.findIndex(f=>f.key==='status')+1,0,
   {key:'mode', label:'How it combines with automatic revenue', type:'select', options:['add','replace']});
 
@@ -2316,6 +2372,11 @@ function autoRevenue(city, per){
     if(d&&n) out.push({name:`${m.name} · dues (${n} mo × ${money(d)})`, category:'Memberships & Dues', amount:d*n, source:'Member record'});
   });
   (state.data.events||[]).filter(e=>e.location===city).forEach(e=>{
+    const ords=(state.data.tickets||[]).filter(o=>o.eventId===e.id && o.status==='paid'), realRev=ords.reduce((t,o)=>t+(Number(o.amount)||0),0);
+    if(realRev>0 && !manual.some(r=>r.mode==='replace' && r.event===e.name && r.category==='Event Tickets')){
+      const rpast=String(e.date)<=localISO(new Date()), nT=ords.reduce((t,o)=>t+(Number(o.qty)||0),0), line={name:`${e.name} · ${nT} ticket${nT===1?'':'s'} sold`, category:'Event Tickets', amount:realRev, source:'Ticket orders', event:e.name};
+      if(!rpast) out.push(Object.assign(line,{projected:true})); else if(inPeriod(e.date,per)) out.push(line);
+    }
     const t=ticketAuto(e,manual); if(!t) return;
     if(t.past){ if(inPeriod(e.date,per)) out.push({name:`${e.name} · ${t.seats} seat${t.seats===1?"":"s"} × ${money(t.price)}`, category:'Event Tickets', amount:t.amount, source:'Event ticketing', event:e.name}); }
     else out.push({name:`${e.name} · ${t.seats} seat${t.seats===1?"":"s"} held × ${money(t.price)}`, category:'Event Tickets', amount:t.amount, source:'Event ticketing', event:e.name, projected:true});
@@ -2464,11 +2525,11 @@ function dhHouseOverviewAction(action, el){
   /* sample dues history so the billing screens have something to show */
   (function(){ const d=new Date(), ym=n=>{ const x=new Date(d.getFullYear(), d.getMonth()-n, 1); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0'); };
     const pay=(m,n,amt)=>({id:'pay-'+m+'-'+n, amount:amt, date:ym(n)+'-03', method:'Card', note:'Sample', by:'System'});
-    SEED.members.forEach(m=>{
-      if(m.id==='mem-0001'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500),pay(m.id,1,1500),pay(m.id,0,1500)]; }
-      if(m.id==='mem-0002'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500),pay(m.id,1,1500)]; }
-      if(m.id==='mem-0003'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500)]; }
-    }); })();
+    SEED.dues=[
+      {id:'due-mem-0001', memberId:'mem-0001', billingStart:ym(2), payments:[pay('mem-0001',2,1500),pay('mem-0001',1,1500),pay('mem-0001',0,1500)]},
+      {id:'due-mem-0002', memberId:'mem-0002', billingStart:ym(2), payments:[pay('mem-0002',2,1500),pay('mem-0002',1,1500)]},
+      {id:'due-mem-0003', memberId:'mem-0003', billingStart:ym(2), payments:[pay('mem-0003',2,1500)]},
+    ]; SEED.tickets=[]; })();
   const ev={e1:['New York City',200],e2:['New York City',150],e3:['Dallas',100]};
   SEED.events.forEach(e=>{ if(ev[e.id]){ e.location=ev[e.id][0]; e.ticketPrice=ev[e.id][1]; } });
   const R=SEED.revenue; const drop=new Set(['rev-0001','rev-0002','rev-0004']);
@@ -2540,7 +2601,7 @@ function ceoBlockHTML(){
 }; })();
 
 
-const ENTITY_ORDER = ['members','requests','applications','circles','bookings','rsvps','reservations','enrollments','spaces','events','vendors','classes','talent','tables','locations','providers','jobs','budgets','inventory','roster','shifts','revenue'];
+const ENTITY_ORDER = ['members','requests','applications','circles','bookings','rsvps','reservations','enrollments','spaces','events','vendors','classes','talent','tables','locations','providers','jobs','budgets','inventory','roster','shifts','revenue','tickets','dues'];
 const APP_STAGES = ['applied','interview','decision'];
 const FOUNDING_CAP = 50;
 
@@ -2569,7 +2630,7 @@ const state = {
   view:'dashboard',
   modal:null,
   loaded:false,
-  data:{members:[], requests:[], applications:[], circles:[], bookings:[], rsvps:[], reservations:[], enrollments:[], spaces:[], events:[], vendors:[], classes:[], talent:[], tables:[], locations:[], providers:[], jobs:[], budgets:[], inventory:[], roster:[], shifts:[], revenue:[]},
+  data:{members:[], requests:[], applications:[], circles:[], bookings:[], rsvps:[], reservations:[], enrollments:[], spaces:[], events:[], vendors:[], classes:[], talent:[], tables:[], locations:[], providers:[], jobs:[], budgets:[], inventory:[], roster:[], shifts:[], revenue:[], tickets:[], dues:[]},
   search:{},
   sort:{requests:{key:'createdAt', dir:-1}, jobs:{key:'neededBy', dir:1}, shifts:{key:'date', dir:1}},
   deletedIds:new Set(),
@@ -2638,6 +2699,7 @@ async function boot(){
   // with simultaneous first-time writes (which is more likely to trigger transient failures).
   for(const [entity, data] of reads){
     if(data){ state.data[entity] = data; continue; }
+    if(entity==='tickets'){ state.data.tickets = []; continue; } // orders are written by the payment webhook; never seeded or reset
     if(entity==='rsvps'){ state.data.rsvps = []; continue; } // left unwritten so the member app can publish its first RSVPs
     if(authMode() && state.realRole!=='ceo'){ state.data[entity] = []; continue; } // nothing visible to this role; never seed on their behalf
     state.data[entity] = SEED[entity];
@@ -3085,6 +3147,7 @@ function renderModal(){
             <button class="modal-close" data-action="close-modal">${ICON.close}</button>
           </div>
           <p class="mono" style="font-size:11px;color:var(--text-faint);margin-bottom:12px;">${s.seats} seats from the app · ${s.checkedIn} checked in${s.waitlist?` · ${s.waitlist} on waitlist`:''}${ev?` · ${ev.capacity||0} capacity, ${ev.held||0} held`:''}</p>
+          ${ticketHolderHTML(ev)}
           ${rs.length ? rs.map(r=>`
             <div class="alert-row" style="gap:12px;">
               <span style="flex:1;min-width:0;"><span style="color:var(--text);">${esc(r.member)}</span> <span class="mono" style="color:var(--text-faint);">${esc(r.memberNo||'')}</span><br><span style="color:var(--text-faint);font-size:11px;">${r.status==='waitlist'?'Waitlist':'Going'}${r.guests?` · +${r.guests} guest${r.guests>1?'s':''}`:''}</span></span>
@@ -3267,6 +3330,7 @@ function renderTable(entity){
                 ${entity==='providers'?`<button class="iconbtn" data-action="open-provider" data-id="${esc(r.id)}" title="Vendor profile: insurance, credentials, history">${ICON.briefcase}</button>`:''}
                 ${entity==='jobs'?`<button class="iconbtn" data-action="open-job" data-id="${esc(r.id)}" title="Open job and dispatch">${ICON.send}</button>`:''}
                 ${entity==='budgets'?`<button class="iconbtn" data-action="open-budget" data-id="${esc(r.id)}" title="Line items and expenses">${ICON.box}</button>`:''}
+                ${entity==='events'&&r.onSale?`<button class="iconbtn" data-action="copy-ticket-link" data-id="${esc(r.id)}" title="Copy the public ticket link">${ICON.send}</button>`:''}
                 ${entity==='events'?`<button class="iconbtn" data-action="open-attendance" data-id="${esc(r.id)}" title="Attendance and check-in">${ICON.members}</button>`:''}
                 ${entity==='classes'?`<button class="iconbtn" data-action="open-roster" data-id="${esc(r.id)}" title="Class roster">${ICON.members}</button>`:''}
                 ${!canWrite(entity)?'':!['bookings','reservations'].includes(entity)?`<button class="iconbtn" data-action="duplicate-entity" data-entity="${entity}" data-id="${esc(r.id)}" title="Duplicate">${ICON.copy}</button>`:''}
@@ -3377,6 +3441,7 @@ document.addEventListener('click', (e)=>{
   if(dhFinanceAction(action, el)) return;
   if(dhProviderDocsAction(action, el)) return;
   if(dhMemberAction(action, el)) return;
+  if(dhTicketAction(action, el)) return;
   if(dhOpsAction(action, el)) return;
   if(action==='open-edit'){
     state.modal = {type:'edit', entity: el.dataset.entity, id: el.dataset.id || null};

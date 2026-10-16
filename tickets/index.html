@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Diaspora House · Tickets</title>
+<style>
+:root{--bg:#f6f2ea;--ink:#1a1a1a;--dim:#5b5b5b;--line:#ddd5c4;--gold:#8a6d2f;--card:#fffdf8;--good:#2f6f4a;--bad:#9b2f2f}
+@media (prefers-color-scheme:dark){:root{--bg:#141210;--ink:#f1ece0;--dim:#a8a291;--line:#34302a;--gold:#c9a45c;--card:#1c1915;--good:#6fbf8c;--bad:#e08080}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;max-width:480px;width:100%;padding:28px}
+.brand{letter-spacing:.22em;font-size:11px;text-transform:uppercase;color:var(--gold);margin:0 0 18px}
+h1{font-size:23px;line-height:1.25;margin:0 0 6px;font-weight:600}.sub{color:var(--dim);font-size:14px;margin:0 0 14px}
+.row{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.row span:first-child{color:var(--dim)}.row span:last-child{text-align:right}
+label{display:block;font-size:12.5px;color:var(--dim);margin:14px 0 5px}
+input,select{width:100%;font:inherit;font-size:15px;padding:11px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--ink)}
+button{width:100%;margin-top:20px;font:inherit;font-size:15px;padding:14px;border-radius:6px;border:1px solid var(--ink);background:var(--ink);color:var(--bg);cursor:pointer}button:disabled{opacity:.5;cursor:default}
+.note{font-size:12.5px;color:var(--dim);margin-top:14px;line-height:1.5}.msg{font-size:15px;line-height:1.55}.ok{color:var(--good)}.bad{color:var(--bad)}.test{background:#fff3cd;color:#5c4400;border-radius:6px;padding:8px 10px;font-size:12.5px;margin-bottom:14px}
+</style></head><body>
+<div class="card" id="app"><p class="brand">Diaspora House</p><p class="msg">Loading…</p></div>
+<script>
+const SB='https://eptsqnvenmllmzshigoi.supabase.co', KEY='sb_publishable_Nsp1ZPj_8ZVZs71bIhtP7g_MqJS1K0C';
+const q=new URLSearchParams(location.search), e=q.get('e')||'';
+const app=document.getElementById('app');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const shell=h=>app.innerHTML='<p class="brand">Diaspora House</p>'+h;
+const H={apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'};
+const back=location.origin+location.pathname;
+function view(d){
+  if(q.get('paid')==='1') return shell('<h1 class="ok">Thank you</h1><p class="msg">Your payment went through. A confirmation email with your ticket code is on its way. If it has not arrived in a few minutes, check your spam folder.</p>');
+  if(d.state==='unknown') return shell('<h1>Tickets not available</h1><p class="msg">This link is not valid, or tickets are not on sale for this event.</p>');
+  const ev=d.event;
+  const top='<h1>'+esc(ev.name)+'</h1><p class="sub">'+esc([ev.category,ev.curator&&('Hosted by '+ev.curator)].filter(Boolean).join(' · '))+'</p>'+
+    '<div class="row"><span>When</span><span>'+esc([ev.date,ev.time].filter(Boolean).join(' · '))+'</span></div>'+
+    (ev.room?'<div class="row"><span>Where</span><span>'+esc(ev.room)+'</span></div>':'')+
+    (ev.dress?'<div class="row"><span>Dress</span><span>'+esc(ev.dress)+'</span></div>':'')+
+    '<div class="row"><span>Price</span><span>$'+Number(d.price).toLocaleString()+' per ticket</span></div>'+
+    (ev.desc?'<p class="note">'+esc(ev.desc)+'</p>':'');
+  if(d.state==='soldout') return shell(top+'<p class="msg bad" style="margin-top:18px">This event is sold out.</p>');
+  if(d.state==='closed') return shell(top+'<p class="msg" style="margin-top:18px">This event has passed.</p>');
+  if(!d.ready) return shell(top+'<p class="msg" style="margin-top:18px">Online ticketing opens soon. Please check back or contact the House.</p>');
+  const opts=Array.from({length:d.maxPerOrder},(_,i)=>'<option>'+(i+1)+'</option>').join('');
+  shell((d.test?'<div class="test">Test mode: no real charges. Use card 4242 4242 4242 4242, any future date, any CVC.</div>':'')+top+
+    '<label>Number of tickets</label><select id="qty">'+opts+'</select>'+
+    '<label>Your name</label><input id="name" autocomplete="name">'+
+    '<label>Email for your confirmation</label><input id="email" type="email" autocomplete="email">'+
+    '<button id="go">Continue to payment</button><p class="msg bad" id="err" style="font-size:13.5px;margin-top:12px"></p>'+
+    '<p class="note">'+d.remaining+' seat'+(d.remaining===1?'':'s')+' left. Payment is handled securely by Stripe.</p>');
+  document.getElementById('go').onclick=async()=>{
+    const btn=document.getElementById('go'), err=document.getElementById('err'); err.textContent='';
+    const name=document.getElementById('name').value.trim(), email=document.getElementById('email').value.trim();
+    if(!name||!/^\S+@\S+\.\S+$/.test(email)){ err.textContent='Please enter your name and a valid email.'; return; }
+    btn.disabled=true; btn.textContent='One moment…';
+    try{
+      const r=await fetch(SB+'/functions/v1/create-checkout',{method:'POST',headers:H,body:JSON.stringify({e,qty:Number(document.getElementById('qty').value),name,email,returnTo:back})});
+      const j=await r.json();
+      if(j.url){ location.href=j.url; return; }
+      err.textContent=j.error||'Something went wrong. Please try again.';
+    }catch(x){ err.textContent='Could not reach the payment service. Please try again.'; }
+    btn.disabled=false; btn.textContent='Continue to payment';
+  };
+}
+if(q.get('paid')==='1') view({}); else if(!e) shell('<h1>Tickets not available</h1><p class="msg">Please use the link you were given.</p>');
+else fetch(SB+'/functions/v1/event-info?e='+encodeURIComponent(e),{headers:H}).then(r=>r.json()).then(view).catch(()=>shell('<p class="msg bad">Could not load this event. Please try again in a moment.</p>'));
+</script></body></html>
