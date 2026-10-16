@@ -417,6 +417,28 @@ textarea{resize:vertical;min-height:70px;}
 
 .fade-in{animation:fadein .35s ease both;}
 @keyframes fadein{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+
+/* Arch cards: gentler curve, extra top room and centred headings so text never sits on the curved corners */
+:root{--arch-card:56px 56px 12px 12px;}
+.card.arch,.pulse-card,.member-card{border-radius:var(--arch-card);}
+.card.arch:not([style*="padding:0"]){padding:34px 26px 22px;}
+.card.arch>h3,.card.arch>.eyebrow,.card.arch>.section-head{text-align:center;}
+.pulse-card{padding:34px 28px 22px;text-align:center;}
+.pulse-card h3,.pulse-card p{max-width:none;}
+.pulse-card .glyph{top:15px;right:auto;left:50%;margin-left:-4px;}
+.pulse-card .actions{justify-content:center;}
+.member-card{padding:34px 24px 20px;}
+.space-card{border-radius:var(--arch-card);}
+.space-media .lvl{top:auto;bottom:8px;left:0;right:0;text-align:center;}
+.space-body{padding:16px 22px 20px;}
+.event-date{min-width:78px;max-width:104px;}
+.event-date .m{white-space:normal;line-height:1.35;overflow-wrap:anywhere;}
+.stat{text-align:center;padding:18px 16px;}
+.card.arch{text-align:center !important;}
+.card.arch>svg{width:30px;height:30px;display:block;margin:0 auto;}
+.card.arch>p,.card.arch>div:not([class]){text-align:center;}
+.space-foot{flex-wrap:wrap;justify-content:center;gap:10px;}
+.space-foot>span{flex-basis:100%;text-align:center;}
 </style>
 </head>
 <body>
