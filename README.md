@@ -42,3 +42,6 @@ Push to `main`; the workflow publishes to GitHub Pages (Settings, Pages, Source:
 - **Approval:** a budget is Draft -> Awaiting approval -> Approved (or Sent back with a reason). Only the CEO approves, sets the approved amount, closes or reopens. Approved budgets lock their line items; staff with budget access use "Request a change".
 - Email: `budget-notify` emails the CEO on submit and the submitter on a decision.
 - Pending: the database guard at the bottom of `supabase/schema.sql` (not yet applied) enforces these rules server-side, and Programming has no budget access until you grant it there.
+
+## Member app: each house's own spaces
+The Spaces screen reads `ops:spaces` and `ops:locations` from the shared store. Members pick a house (their own is marked) and see only that house's rooms; rooms staff put in maintenance show as closed, and houses marked "opening soon" say so. Edit spaces in the Ops Console and they appear in the member app within about 20 seconds.

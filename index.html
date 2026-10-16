@@ -1522,6 +1522,9 @@ function scrollTutorChatToBottom(){
 
 /* ---------------- View: Spaces ---------------- */
 /* ---------------- Space helpers ---------------- */
+SPACES.forEach(s=>{ if(!s.location) s.location = 'New York City'; });
+const STATIC_SPACES = SPACES.map(s=>Object.assign({}, s));
+const WING_ICON = {'Engine Room':'faraday','Culinary & Connection':'griot','Performance & Wellness':'biohack'};
 const SPACE_WINGS = ["All","Engine Room","Culinary & Connection","Performance & Wellness"];
 const SPACE_PAIRINGS = {faraday:'war', war:'faraday', kitchen:'griot', griot:'kitchen', biohack:'scent', scent:'biohack', portal:'elders', elders:'kitchen', shadow:'atelier', atelier:'griot'};
 const TIME_SLOTS = ["9:00 AM","11:00 AM","1:00 PM","3:30 PM","6:00 PM","8:00 PM"];
@@ -1558,11 +1561,17 @@ function bookingToICS(b){
 
 function viewSpaces(){
   const wing = state.spaceFilter || 'All';
-  const list = SPACES.filter(s => wing==='All' || wingOf(s)===wing);
+  const houseNames = [...new Set([...(state.houses||[]).map(h=>h.city), ...SPACES.map(s=>s.location)])];
+  if(!houseNames.length) houseNames.push(MEMBER.base);
+  const house = houseNames.includes(state.spaceHouse) ? state.spaceHouse : (houseNames.includes(MEMBER.base) ? MEMBER.base : houseNames[0]);
+  const hinfo = (state.houses||[]).find(h=>h.city===house);
+  const inHouse = SPACES.filter(s => (s.location||MEMBER.base)===house);
+  const list = inHouse.filter(s => wing==='All' || wingOf(s)===wing);
   const fav = favoriteSpaceId();
   return `
   <div class="section">
     <p class="muted" style="max-width:640px;margin-bottom:16px;">Every room in the House does one job well. Choose a space below to see availability, house rules, and add-on staffing.</p>
+    ${houseNames.length>1 ? `<div class="tag-row" style="margin-bottom:12px;">${houseNames.map(h=>`<button class="pill ${house===h?'on':'tag'}" data-action="filter-house" data-house="${esc(h)}" style="cursor:pointer;">${esc(h)}${h===MEMBER.base?' · your house':''}</button>`).join('')}</div>` : ''}
     <div class="tag-row" style="margin-bottom:22px;">
       ${SPACE_WINGS.map(w=>`<button class="pill ${wing===w?'on':'tag'}" data-action="filter-wing" data-wing="${esc(w)}" style="cursor:pointer;">${esc(w)}</button>`).join('')}
     </div>
@@ -1578,14 +1587,14 @@ function viewSpaces(){
               <span class="faint mono" style="font-size:11px;">${bookingCountFor(s.id)} upcoming booking${bookingCountFor(s.id)===1?'':'s'}</span>
               <div style="display:flex;gap:8px;">
                 <button class="btn btn-ghost btn-sm" data-action="open-space" data-id="${s.id}">Details</button>
-                <button class="btn btn-primary btn-sm" data-action="open-book" data-id="${s.id}">Reserve</button>
+                ${s.maintenance ? `<span class="pill tag">Closed for maintenance</span>` : `<button class="btn btn-primary btn-sm" data-action="open-book" data-id="${s.id}">Reserve</button>`}
               </div>
             </div>
           </div>
         </div>
       `).join('')}
     </div>
-    ${list.length===0 ? `<div class="empty"><h3>No spaces in this wing</h3></div>` : ''}
+    ${list.length===0 ? `<div class="empty"><h3>${inHouse.length===0 ? (hinfo&&hinfo.soon ? esc(house)+' is opening soon' : 'No spaces published for '+esc(house)+' yet') : 'No spaces in this wing'}</h3>${inHouse.length===0?`<p>${hinfo&&hinfo.soon?'Its rooms will appear here when the house opens.':'Check back soon.'}</p>`:''}</div>` : ''}
   </div>
 
   <div class="section">
@@ -1835,7 +1844,7 @@ async function writeRsvp(eventId, status){
 async function writeBooking(b, status){
   if(!sharedAvailable()) return false;
   const sp = SPACES.find(s=>s.id===b.spaceId); const now = new Date().toISOString();
-  const rec = {id:b.id, spaceId:b.spaceId, spaceName: sp?sp.name:b.spaceId, date:b.date, time:b.time, member:MEMBER.name, memberNo:MEMBER.memberNo, addons:b.addons||[], notes:b.notes||'', status, createdAt:now, updatedAt:now};
+  const rec = {id:b.id, spaceId:b.spaceId, spaceName: sp?sp.name:b.spaceId, location: sp&&sp.location||'', date:b.date, time:b.time, member:MEMBER.name, memberNo:MEMBER.memberNo, addons:b.addons||[], notes:b.notes||'', status, createdAt:now, updatedAt:now};
   const list = (await sget(BOOKING_KEY)) || [];
   const i = list.findIndex(r=>r.id===rec.id);
   if(i>-1){ rec.createdAt = list[i].createdAt || now; list[i] = rec; } else list.push(rec);
@@ -1909,6 +1918,22 @@ async function hydrateShared(){
       e.cancelled = r.status==='cancelled';
     });
   }
+  // houses and each house's own spaces (managed by staff in the Ops Console)
+  let spacesChanged = false;
+  const lcs = await sget('ops:locations');
+  if(Array.isArray(lcs)) state.houses = lcs.filter(l=>l && l.city).map(l=>({city:l.city, soon:l.status==='opening soon'}));
+  const sps = await sget('ops:spaces');
+  if(Array.isArray(sps) && sps.length){
+    const next = sps.filter(r=>r && r.id && r.name).map(r=>{
+      const st = STATIC_SPACES.find(x=>x.id===r.id) || {};
+      const wing = r.wing || (st.level ? wingOf(st) : 'Engine Room');
+      const cap = Number(r.capacity)||st.capacity||0;
+      return Object.assign({icon:WING_ICON[wing]||'faraday', idealFor:[], tags:[], amenities:[], addons:[], rules:'', desc:'', exclusive:false}, st, r,
+        {capacity:cap, wing, level:((st.level||'House').split(' — ')[0])+' — '+wing, location:r.location||st.location||'New York City', maintenance:r.status==='maintenance', icon:st.icon||WING_ICON[wing]||'faraday'});
+    });
+    const sig = x => JSON.stringify(x.map(s=>[s.id,s.name,s.location,s.wing,s.capacity,s.exclusive,s.maintenance,s.desc,s.tags,s.amenities,s.addons,s.rules]));
+    if(sig(next)!==sig(SPACES)){ SPACES.length = 0; next.forEach(s=>SPACES.push(s)); spacesChanged = true; }
+  }
   // RSVPs
   const rs = await sget(RSVP_KEY);
   const mine = rs ? rs.filter(r=>r.memberNo===MEMBER.memberNo) : [];
@@ -1927,7 +1952,7 @@ async function hydrateShared(){
   // bookings
   const bs = await sget(BOOKING_KEY);
   if(bs){
-    state.bookings = bs.filter(b=>b.memberNo===MEMBER.memberNo && b.status==='confirmed' && b.spaceId).map(b=>({id:b.id, spaceId:b.spaceId, date:b.date, time:b.time, addons:b.addons||[], notes:b.notes||''}));
+    state.bookings = bs.filter(b=>b.memberNo===MEMBER.memberNo && b.status==='confirmed' && b.spaceId && SPACES.some(x=>x.id===b.spaceId)).map(b=>({id:b.id, spaceId:b.spaceId, date:b.date, time:b.time, addons:b.addons||[], notes:b.notes||''}));
     state.otherBookings = bs.filter(b=>b.memberNo!==MEMBER.memberNo && ['confirmed','blocked'].includes(b.status));
   }
   // Souk: stock levels and everyone's reservations
@@ -1964,7 +1989,7 @@ async function hydrateShared(){
     mineE.forEach(e=>{ if(!state.children.some(c=>c.id===e.childId)) state.children.push({id:e.childId, name:e.childName||'Child', age:Number(e.childAge)||0}); });
     state.enrollments = mineE.map(e=>({classId:e.classId, childId:e.childId}));
   }
-  const changed = before!==snap();
+  const changed = spacesChanged || before!==snap();
   if(changed && !state.modal) renderView();
   return changed;
 }
@@ -3099,6 +3124,7 @@ document.addEventListener('click', async (e)=>{
   }
 
   if(action==='open-space'){ state.modal = {type:'space', id: el.dataset.id}; renderModal(); return; }
+  if(action==='filter-house'){ state.spaceHouse = el.dataset.house; state.spaceFilter = 'All'; renderView(); return; }
   if(action==='filter-wing'){ state.spaceFilter = el.dataset.wing; renderView(); return; }
   if(action==='open-book'){ state.modal = {type:'book', spaceId: el.dataset.id, rescheduleIdx: null}; renderModal(); return; }
   if(action==='reschedule-booking'){
