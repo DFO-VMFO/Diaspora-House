@@ -1080,18 +1080,18 @@ function offerMessage(j, p){
 async function deliverOffer(j, p){
   let note;
   const via = p.notifyVia||'SMS';
-  if(!db.active() || !db.session()){ note = 'not sent (sign in with the database connected to send email)'; }
+  if(!DH_DB.active() || !DH_DB.session()){ note = 'not sent (sign in with the database connected to send email)'; }
   else if(!p.email){ note = via==='Email' ? 'not sent: no email on file' : `not sent: ${via} is not set up yet and there is no email on file`; }
   else {
     const m = offerMessage(j, p);
-    const r = await db.fn('send-offer', {to:p.email, subject:'New request: '+j.summary, text:m.text, link:m.link});
+    const r = await DH_DB.fn('send-offer', {to:p.email, subject:'New request: '+j.summary, text:m.text, link:m.link});
     note = r.data && r.data.delivered ? (via==='Email' ? 'emailed' : `emailed (${via} is not set up yet)`) : (r.data && r.data.reason==='no_real_email' ? 'not sent: that is a sample email address' : 'email failed, try Resend');
   }
   jobLog(j, `Delivery to ${p.name}: ${note}`); touch(j); await persist('jobs');
   if(!state.modal || state.modal.type==='job') render();
 }
 async function applyJobResponses(){
-  if(!db.active() || !canWrite('jobs')) return;
+  if(!DH_DB.active() || !canWrite('jobs')) return;
   const offered=(state.data.jobs||[]).filter(j=>j.status==='offered' && j.token); if(!offered.length) return;
   const resp = await storageGet('ops:job_responses'); if(!resp || typeof resp!=='object') return;
   let n=0;
@@ -2087,14 +2087,14 @@ function dhProviderDocsAction(action, el){
   if(action==='doc-open'){
     const d=(p.docs||[]).find(x=>x.id===el.dataset.doc); if(!d) return true;
     const win = window.open('', '_blank');
-    db.docUrl(d.path).then(u=>{ if(u && win){ win.location = u; } else { if(win) win.close(); toast('Could not open that document.'); } });
+    DH_DB.docUrl(d.path).then(u=>{ if(u && win){ win.location = u; } else { if(win) win.close(); toast('Could not open that document.'); } });
     return true;
   }
-  if(!db.active()){ toast('Connect the database to store documents.'); return true; }
+  if(!DH_DB.active()){ toast('Connect the database to store documents.'); return true; }
   if(action==='doc-delete'){
     const d=(p.docs||[]).find(x=>x.id===el.dataset.doc); if(!d) return true;
     if(!window.confirm('Remove '+d.type+' ('+d.name+')? The file is deleted.')) return true;
-    db.removeDoc(d.path).then(ok=>{
+    DH_DB.removeDoc(d.path).then(ok=>{
       if(!ok){ toast('Could not delete the file.'); return; }
       p.docs = p.docs.filter(x=>x.id!==d.id);
       if(!p.docs.some(x=>x.type===d.type)){ if(d.type==='W-9') p.w9=false; if(d.type==='Partner agreement') p.agreement=false; if(d.type==='Certificate of insurance'){ p.insurance=false; p.insuranceExpires=''; } }
@@ -2109,7 +2109,7 @@ function dhProviderDocsAction(action, el){
   const type=document.getElementById('doc-type').value, expires=document.getElementById('doc-expires').value||'';
   const id=uid('doc'), safe=f.name.replace(/[^\w.\-]+/g,'_').slice(-80), path=p.id+'/'+id+'-'+safe;
   toast('Uploading…');
-  db.uploadDoc(path, f).then(r=>{
+  DH_DB.uploadDoc(path, f).then(r=>{
     if(!r.ok){ toast('Upload failed: '+r.msg); return; }
     (p.docs=p.docs||[]).push({id, type, name:f.name, path, expires, uploadedAt:new Date().toISOString(), by:state.staffName||'Staff'});
     syncDocFlags(p); touch(p); persist('providers'); logActivity('updated','providers',`${p.name}: ${type} uploaded`); toast('Document saved.'); render();
