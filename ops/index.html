@@ -337,9 +337,10 @@ const DH_DB = (function(){
   db.sendCode = async function(email){
     const cfg = db.config(); if(!cfg) return {ok:false, msg:'No database is set up.'};
     const em = String(email||'').trim().toLowerCase(); if(!/^\S+@\S+\.\S+$/.test(em)) return {ok:false, msg:'Enter your work email.'};
-    let res; try{ res = await fetchT(cfg.url+'/auth/v1/otp', {method:'POST', headers:{apikey:cfg.key, 'Content-Type':'application/json'}, body:JSON.stringify({email:em, create_user:false})}); }
+    let res; try{ res = await fetchT(cfg.url+'/functions/v1/send-code', {method:'POST', headers:{apikey:cfg.key, Authorization:'Bearer '+cfg.key, 'Content-Type':'application/json'}, body:JSON.stringify({email:em})}); }
     catch(e){ return {ok:false, msg:'Could not reach the sign-in service.'}; }
-    if(res.status===429) return {ok:false, msg:'Too many codes requested. Wait a minute and try again.'};
+    if(res.status===429) return {ok:false, msg:'Too many codes requested. Wait ten minutes and try again.'};
+    if(!res.ok) return {ok:false, msg:'Could not send the code. Try again in a moment.'};
     return {ok:true, msg:'If that email is on the House team, a 6-digit code is on its way.'};
   };
   db.verifyCode = async function(email, code){

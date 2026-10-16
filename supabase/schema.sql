@@ -142,3 +142,12 @@ insert into public.role_access(role,key,can_write) values
 ('auditor','ops:talent_directory',false);
 
 -- Mock team (auth users are created separately; see users.sql)
+
+-- Sign-in email via Resend (edge function `send-code`): private tables, service role only
+create table if not exists public.app_secrets (name text primary key, value text not null, updated_at timestamptz not null default now());
+alter table public.app_secrets enable row level security;
+revoke all on public.app_secrets from anon, authenticated;
+create table if not exists public.signin_attempts (id bigserial primary key, email text not null, at timestamptz not null default now());
+alter table public.signin_attempts enable row level security;
+revoke all on public.signin_attempts from anon, authenticated;
+create index if not exists signin_attempts_email_at on public.signin_attempts(email, at desc);
