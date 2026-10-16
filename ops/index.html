@@ -3438,6 +3438,7 @@ document.addEventListener('click', (e)=>{
   if(action==='open-budget'){ state.modal = {type:'budget', id:el.dataset.id}; renderModal(); return; }
   if(dhHouseAction(action, el)) return;
   if(dhHouseOverviewAction(action, el)) return;
+  if(dhBudgetAction(action, el)) return;
   if(dhFinanceAction(action, el)) return;
   if(dhProviderDocsAction(action, el)) return;
   if(dhMemberAction(action, el)) return;
@@ -3746,6 +3747,167 @@ setInterval(refreshShared, 15000);
 
 /* Sign-in is required: the login screen shows until a team member verifies their emailed code. */
 async function dhOpenSignIn(){ return false; }
+/* ============ Budgets: forecasts and CEO approval ============ */
+const BSTATUS = {draft:['applied','Draft'], submitted:['interview','Awaiting approval'], approved:['active','Approved'], rejected:['flagged','Sent back'], closed:['pending','Closed']};
+function bStatus(b){ return BSTATUS[b.status] ? b.status : 'draft'; }
+function bBadge(b){ const x = BSTATUS[bStatus(b)]; return `<span class="badge ${x[0]}" data-action="open-budget" data-id="${esc(b.id)}" style="cursor:pointer;" title="Open budget">${x[1]}</span>`; }
+function bPlanned(b){ return (b.lines||[]).reduce((t,l)=>t+(Number(l.planned)||0),0); }
+/* Forecast at completion: every line finishes at the larger of its plan and what is already spent on it,
+   plus automatic charges (finished and scheduled provider jobs and staff shifts) which sit outside the lines.
+   If the budget has start and end dates, a pace estimate (spent so far / share of time elapsed) is shown too. */
+function budgetForecast(b){
+  const s = budgetSpend(b); const exp = b.expenses||[];
+  const rows = (b.lines||[]).map(l=>{
+    const spent = exp.filter(e=>e.lineId===l.id).reduce((t,e)=>t+(Number(e.amount)||0),0);
+    const planned = Number(l.planned)||0; const fc = Math.max(planned, spent);
+    return {id:l.id, label:l.category+(l.description?' — '+l.description:''), planned, spent, forecast:fc, variance:fc-planned};
+  });
+  const orphan = exp.filter(e=>!(b.lines||[]).some(l=>l.id===e.lineId)).reduce((t,e)=>t+(Number(e.amount)||0),0);
+  const auto = s.jobsDone + s.laborDone + s.committed;
+  const total = rows.reduce((t,r)=>t+r.forecast,0) + orphan + auto;
+  let pace = null;
+  if(b.startDate && b.endDate){
+    const t0 = Date.parse(b.startDate), t1 = Date.parse(b.endDate), now = Date.now();
+    if(t1>t0 && now>t0 && now<t1){ const frac = (now-t0)/(t1-t0); if(frac>=0.15) pace = {frac, amount: s.spent/frac}; }
+  }
+  const cap = s.cap; const worst = Math.max(total, pace?pace.amount:0);
+  const level = !cap ? '' : (worst>cap ? 'over' : (worst>=cap*0.95 ? 'tight' : 'ok'));
+  return {rows, orphan, auto, total, pace, cap, level, worst, over: Math.max(0, worst-cap)};
+}
+function fcColor(level){ return level==='over'?'var(--bad)':(level==='tight'?'var(--warn)':'var(--good)'); }
+function bLogAdd(b, what, extra){ (b.approvalLog = b.approvalLog||[]).push(Object.assign({at:new Date().toISOString(), by:state.staffName||'Staff', what}, extra||{})); if(b.approvalLog.length>30) b.approvalLog = b.approvalLog.slice(-30); }
+
+/* the generic edit form no longer sets the approved total or status: that happens through the approval flow */
+SCHEMAS.budgets.fields = SCHEMAS.budgets.fields.filter(f=>f.key!=='approved' && f.key!=='status');
+SCHEMAS.budgets.fields.splice(SCHEMAS.budgets.fields.findIndex(f=>f.key==='notes'),0,
+  {key:'startDate', label:'Spending starts (optional, enables pace forecast)', type:'date'},
+  {key:'endDate', label:'Spending ends (optional)', type:'date'});
+(function(){
+  const cols = SCHEMAS.budgets.columns; const i = cols.findIndex(c=>c.header==='Status');
+  cols[i] = {header:'Status', sortKey:'status', render:b=>bBadge(b)};
+  cols.splice(i,0,{header:'Forecast', render:b=>{
+    if(bStatus(b)==='submitted') return `${money(b.requested||bPlanned(b))}<div class="rowsub">requested</div>`;
+    if(bStatus(b)==='draft'||bStatus(b)==='rejected') return `${money(bPlanned(b))}<div class="rowsub">planned</div>`;
+    const f = budgetForecast(b);
+    return `<span style="color:${fcColor(f.level)};">${money(f.worst)}</span><div class="rowsub">${f.level==='over'?money(f.over)+' over':(f.level==='tight'?'close to the limit':'on plan')}</div>`;
+  }});
+  const ap = cols.find(c=>c.header==='Approved'); const apr = ap.render;
+  ap.render = b => bStatus(b)==='approved'||bStatus(b)==='closed' ? apr(b) : `<span style="color:var(--text-faint);">not approved</span>`;
+})();
+
+const _budgetModal0 = budgetModalHTML;
+budgetModalHTML = function(){
+  let html = _budgetModal0(); const b = state.data.budgets.find(x=>x.id===state.modal.id); if(!b) return html;
+  const st = bStatus(b), ceo = isOwner(), f = budgetForecast(b), planned = bPlanned(b);
+  const btn = (act, label, cls) => `<button class="btn ${cls||'btn-ghost'} btn-sm" data-action="${act}" data-id="${esc(b.id)}"><span>${label}</span></button>`;
+  let acts = '';
+  if(ceo && st!=='approved' && st!=='closed') acts += `<div class="field-row"><div class="field"><label>Approve for ($)</label><input type="number" id="bd-amount" value="${Number(b.requested||planned)||''}"></div><div class="field"><label>Note ${st==='submitted'?'(required if sending back)':'(optional)'}</label><input type="text" id="bd-note"></div></div><div style="display:flex;gap:8px;flex-wrap:wrap;">${btn('budget-approve','Approve','btn-primary')}${st==='submitted'?btn('budget-reject','Send back'):''}</div>`;
+  else if(ceo && st==='approved') acts += `<div style="display:flex;gap:8px;flex-wrap:wrap;">${btn('budget-close','Close budget')}</div>`;
+  else if(ceo && st==='closed') acts += `<div style="display:flex;gap:8px;flex-wrap:wrap;">${btn('budget-reopen','Reopen')}</div>`;
+  if(!ceo){
+    if(st==='draft'||st==='rejected') acts += btn('budget-submit','Submit for CEO approval','btn-primary');
+    else if(st==='submitted') acts += btn('budget-withdraw','Withdraw to edit');
+    else if(st==='approved') acts += btn('budget-request-change','Request a change');
+  } else if(st==='approved' || st==='closed'){ /* CEO acts above */ }
+  const d = b.decision;
+  const info = st==='submitted' ? `Submitted by ${esc(b.submittedBy||'staff')} ${b.submittedAt?timeAgo(b.submittedAt):''} for <b>${money(b.requested||planned)}</b>.`
+    : st==='approved' ? `Approved for <b>${money(b.approved)}</b>${d?` by ${esc(d.by)} ${timeAgo(d.at)}`:''}.${d&&d.note?' “'+esc(d.note)+'”':''}`
+    : st==='rejected' ? `Sent back${d?` by ${esc(d.by)} ${timeAgo(d.at)}`:''}.${d&&d.note?' Reason: “'+esc(d.note)+'”':''}`
+    : st==='closed' ? 'Closed. No more spending is expected.' : `Draft. Planned so far: <b>${money(planned)}</b>. Not approved yet.`;
+  const log = (b.approvalLog||[]).slice(-5).reverse().map(x=>`<div class="activity-row"><span class="who">${esc(x.by)}</span><span>${esc(x.what)}${x.amount?' · '+money(x.amount):''}${x.note?' · “'+esc(x.note)+'”':''}</span><span class="when">${timeAgo(x.at)}</span></div>`).join('');
+  const approval = `<div class="modal-head" style="margin-bottom:6px;"><h3 style="font-size:13px;">Approval</h3>${bBadge(b)}</div>
+    <p style="font-size:12.5px;margin:0 0 10px;">${info}</p>${acts?`<div style="margin-bottom:12px;">${acts}</div>`:''}${log?`<div style="margin-bottom:14px;">${log}</div>`:''}`;
+  const vcell = v => `<span style="color:${v>0?'var(--bad)':'var(--text-faint)'};">${v>0?'+'+money(v):'—'}</span>`;
+  const forecast = (st==='approved'||st==='closed'||f.rows.length) ? `<div class="modal-head" style="margin-bottom:6px;"><h3 style="font-size:13px;">Forecast at completion</h3><span class="pill" style="color:${fcColor(f.level)};">${money(f.worst)}${f.cap?' of '+money(f.cap):''}</span></div>
+    <div class="nested-list" style="margin-bottom:6px;">
+      <div class="nested-item" style="font-size:11px;color:var(--text-faint);display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:8px;"><span>Line</span><span>Planned</span><span>Spent</span><span>Forecast</span><span>Over plan</span></div>
+      ${f.rows.map(r=>`<div class="nested-item" style="font-size:12.5px;display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:8px;"><span>${esc(r.label)}</span><span>${money(r.planned)}</span><span>${money(r.spent)}</span><span>${money(r.forecast)}</span>${vcell(r.variance)}</div>`).join('')}
+      ${f.auto?`<div class="nested-item" style="font-size:12.5px;display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:8px;"><span>Provider jobs and staff shifts (automatic)</span><span>—</span><span>—</span><span>${money(f.auto)}</span><span></span></div>`:''}
+      ${f.orphan?`<div class="nested-item" style="font-size:12.5px;"><span>Expenses on removed lines: ${money(f.orphan)}</span></div>`:''}
+    </div>
+    <p style="font-size:11.5px;color:var(--text-faint);margin:0 0 14px;">Each line is assumed to finish at the larger of its plan and what has been spent on it. ${f.pace?`At the current pace (${Math.round(f.pace.frac*100)}% of the time used) spending would reach ${money(f.pace.amount)}.`:'Add start and end dates in Edit to see a pace estimate.'}</p>` : '';
+  const marker = '<div class="modal-head" style="margin-bottom:6px;"><h3 style="font-size:13px;">Line items</h3></div>';
+  return html.includes(marker) ? html.replace(marker, approval+forecast+marker) : html;
+};
+
+['budget-submit','budget-withdraw','budget-request-change','budget-approve','budget-reject','budget-close','budget-reopen'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='budgets'; });
+function budgetNotify(b, kind){
+  if(!DH_DB.active || !DH_DB.active()) return;
+  DH_DB.fn('budget-notify', {budgetId:b.id, kind}).then(r=>{
+    if(r && r.ok && r.data && r.data.sent) toast(kind==='submitted'?'CEO notified by email.':'Submitter notified by email.');
+  });
+}
+function dhBudgetAction(action, el){
+  const id = el.dataset.id; const find = ()=>state.data.budgets.find(x=>x.id===id);
+  if(action==='add-budget-line' || action==='remove-budget-line'){
+    const b = find(); if(b && !isOwner() && ['approved','closed','submitted'].includes(bStatus(b))){
+      toast(bStatus(b)==='submitted' ? 'Withdraw this budget from approval to edit its lines.' : 'This budget is approved. Request a change to edit its lines.'); return true; }
+    return false;
+  }
+  if(!action.startsWith('budget-') || !['budget-submit','budget-withdraw','budget-request-change','budget-approve','budget-reject','budget-close','budget-reopen'].includes(action)) return false;
+  const b = find(); if(!b) return true;
+  const ceoOnly = ['budget-approve','budget-reject','budget-close','budget-reopen'];
+  if(ceoOnly.includes(action) && !isOwner()){ toast('Only the CEO can do that.'); return true; }
+  const st = bStatus(b); const planned = bPlanned(b); const now = new Date().toISOString();
+  const done = (msg)=>{ touch(b); persist('budgets'); logActivity('updated','budgets',`${b.name}: ${msg}`); render(); };
+  if(action==='budget-submit'){
+    if(!(b.lines||[]).length || !planned){ toast('Add at least one line item with a planned amount first.'); return true; }
+    b.status='submitted'; b.requested=planned; b.submittedAt=now; b.submittedBy=state.staffName||'Staff'; b.submittedByEmail=(DH_DB.profile&&DH_DB.profile.email)||'';
+    bLogAdd(b,'Submitted for approval',{amount:planned}); done('submitted for approval'); budgetNotify(b,'submitted'); toast('Submitted. The CEO has been asked to approve it.'); return true;
+  }
+  if(action==='budget-withdraw'){ if(st!=='submitted') return true; b.status='draft'; bLogAdd(b,'Withdrawn'); done('withdrawn'); return true; }
+  if(action==='budget-request-change'){ if(st!=='approved') return true; b.status='submitted'; b.requested=planned; b.submittedAt=now; b.submittedBy=state.staffName||'Staff'; b.submittedByEmail=(DH_DB.profile&&DH_DB.profile.email)||'';
+    bLogAdd(b,'Requested a change',{amount:planned}); done('change requested'); budgetNotify(b,'submitted'); return true; }
+  const amountEl = document.getElementById('bd-amount'), noteEl = document.getElementById('bd-note');
+  const note = noteEl ? noteEl.value.trim() : '';
+  if(action==='budget-approve'){
+    const amount = Number(amountEl && amountEl.value) || planned;
+    if(!amount){ toast('Enter the amount to approve.'); return true; }
+    b.approved=amount; b.status='approved'; b.decision={by:state.staffName||'CEO', at:now, note}; bLogAdd(b,'Approved',{amount, note});
+    done(`approved at ${money(amount)}`); if(b.submittedByEmail) budgetNotify(b,'decision'); toast('Approved.'); return true;
+  }
+  if(action==='budget-reject'){
+    if(!note){ toast('Add a short reason so the team knows what to change.'); return true; }
+    b.status='rejected'; b.decision={by:state.staffName||'CEO', at:now, note}; bLogAdd(b,'Sent back',{note});
+    done('sent back'); if(b.submittedByEmail) budgetNotify(b,'decision'); return true;
+  }
+  if(action==='budget-close'){ b.status='closed'; bLogAdd(b,'Closed'); done('closed'); return true; }
+  if(action==='budget-reopen'){ b.status='approved'; bLogAdd(b,'Reopened'); done('reopened'); return true; }
+  return true;
+}
+
+const _computeInsights6 = computeInsights;
+computeInsights = function(){
+  const a = _computeInsights6();
+  (state.data.budgets||[]).forEach(b=>{
+    const st = bStatus(b);
+    if(st==='submitted' && isOwner()) a.unshift({level:'warn', text:`${b.name} awaits your approval (${money(b.requested||bPlanned(b))})`, view:'budgets'});
+    if(st==='rejected') a.push({level:'warn', text:`${b.name} was sent back${b.decision&&b.decision.note?': '+b.decision.note:''}`, view:'budgets'});
+    if(st==='approved'){
+      const f = budgetForecast(b), s = budgetSpend(b);
+      if(f.level==='over' && s.spent<=s.cap) a.push({level:'warn', text:`${b.name} is forecast to finish at ${money(f.worst)}, ${money(f.over)} over its ${money(f.cap)} approval`, view:'budgets'});
+    }
+  });
+  return a;
+};
+(function(){
+  const _s = STRIPS.budgets;
+  STRIPS.budgets = function(){
+    const bs = state.data.budgets||[]; const wait = bs.filter(b=>bStatus(b)==='submitted');
+    const over = bs.filter(b=>bStatus(b)==='approved' && budgetForecast(b).level==='over');
+    const box = (wait.length||over.length) ? `<div class="kpi-grid" style="margin-bottom:16px;">
+      <div class="kpi"><div class="num" style="${wait.length?'color:var(--warn);':''}">${wait.length}</div><div class="label">Awaiting approval${wait.length?' · '+money(wait.reduce((t,b)=>t+(Number(b.requested)||bPlanned(b)),0)):''}</div></div>
+      <div class="kpi"><div class="num" style="${over.length?'color:var(--bad);':''}">${over.length}</div><div class="label">Forecast to exceed approval${over.length?' · '+money(over.reduce((t,b)=>t+budgetForecast(b).over,0))+' over':''}</div></div></div>` : '';
+    return box + _s();
+  };
+})();
+(function(){
+  const day = 86400000, iso = t=>new Date(t).toISOString();
+  if(!SEED.budgets.some(b=>b.id==='bud-0006')) SEED.budgets.push({id:'bud-0006', name:'Founders Day Gala (Dallas)', scope:'Event', linkedTo:'—', location:'Dallas', owner:'Programming Director', status:'submitted', requested:24500, submittedAt:iso(Date.now()-2*day), submittedBy:'Ngozi Eze', submittedByEmail:'', notes:'Sample data',
+    lines:[{id:'bl-1',category:'Food & Beverage',description:'Plated dinner for 120',planned:11000},{id:'bl-2',category:'Venue & Rentals',description:'',planned:6500},{id:'bl-3',category:'AV & Production',description:'',planned:3500},{id:'bl-4',category:'Decor & Florals',description:'',planned:3500}],
+    expenses:[], approvalLog:[{at:iso(Date.now()-2*day), by:'Ngozi Eze', what:'Submitted for approval', amount:24500}]});
+})();
+
 async function bootGate(){
   if(authMode()){
     if(DH_DB.session() && !DH_DB.profile) await DH_DB.loadProfile();

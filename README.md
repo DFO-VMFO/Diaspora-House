@@ -36,3 +36,9 @@ Push to `main`; the workflow publishes to GitHub Pages (Settings, Pages, Source:
 - Ticket revenue flows into each house's revenue and profit automatically.
 - **Stripe is in sandbox (test) mode.** Going live means a live webhook endpoint plus swapping the secret key, nothing else.
 - Setup: the edge function secret `STRIPE_SECRET_KEY` must be set (Supabase, Edge Functions, Secrets). The webhook signing secret is already stored.
+
+## Budgets: forecasts and approval
+- Each budget shows a **forecast at completion**: every line finishes at the larger of its plan and its spend, plus provider jobs and staff shifts charged to it. Optional start/end dates add a pace estimate. Over-forecast budgets raise a dashboard alert.
+- **Approval:** a budget is Draft -> Awaiting approval -> Approved (or Sent back with a reason). Only the CEO approves, sets the approved amount, closes or reopens. Approved budgets lock their line items; staff with budget access use "Request a change".
+- Email: `budget-notify` emails the CEO on submit and the submitter on a decision.
+- Pending: the database guard at the bottom of `supabase/schema.sql` (not yet applied) enforces these rules server-side, and Programming has no budget access until you grant it there.

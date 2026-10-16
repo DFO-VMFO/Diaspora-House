@@ -163,3 +163,35 @@ create policy "provider_docs_ceo_update" on storage.objects for update to authen
 create policy "provider_docs_ceo_delete" on storage.objects for delete to authenticated using (bucket_id='provider-docs' and (select private.current_staff_role())='ceo');
 -- app_secrets rows 'resend_api_key' and 'cron_key' are set directly in the database, never committed.
 -- select cron.schedule('provider-doc-expiry-daily','0 14 * * *', $$select net.http_post(url:='https://eptsqnvenmllmzshigoi.supabase.co/functions/v1/expiry-reminders', headers:=jsonb_build_object('Content-Type','application/json','x-cron-key',(select value from public.app_secrets where name='cron_key')), body:='{}'::jsonb)$$);
+
+-- Budget approval guard (optional, pending: needs to be applied once).
+-- Stops any non-CEO from approving a budget or changing its approved amount, directly in the database.
+-- To also let Programming submit budgets: insert into public.role_access values ('programming','ops:budgets',true), then add "budgets" to its reads/write/views in roles.json and the console.
+create or replace function private.guard_budgets() returns trigger language plpgsql security definer set search_path = public, private as $$
+declare n jsonb; o jsonb; ns text; os text; oldv jsonb;
+begin
+  if auth.uid() is null or private.current_staff_role() is null or private.current_staff_role() = 'ceo' then return new; end if;
+  if new.key <> 'ops:budgets' then return new; end if;
+  oldv := case when tg_op = 'UPDATE' then coalesce(old.value, '[]'::jsonb) else '[]'::jsonb end;
+  if jsonb_typeof(new.value) <> 'array' then raise exception 'budgets must be a list'; end if;
+  for n in select * from jsonb_array_elements(new.value) loop
+    ns := coalesce(n->>'status','draft');
+    select e into o from jsonb_array_elements(oldv) e where e->>'id' = n->>'id' limit 1;
+    if o is null then
+      if ns not in ('draft','submitted') or coalesce((n->>'approved')::numeric,0) <> 0 then raise exception 'new budgets must start as draft or submitted'; end if;
+    else
+      os := coalesce(o->>'status','draft');
+      if coalesce((n->>'approved')::numeric,0) <> coalesce((o->>'approved')::numeric,0) then raise exception 'only the CEO can change the approved amount'; end if;
+      if ns <> os and not ((os,ns) in (('draft','submitted'),('rejected','submitted'),('submitted','draft'),('approved','submitted'))) then raise exception 'only the CEO can move a budget from % to %', os, ns; end if;
+      if ns = os and (n->'decision') is distinct from (o->'decision') then raise exception 'only the CEO can record a decision'; end if;
+      if os in ('approved','closed') and ns = os and (n->'lines') is distinct from (o->'lines') then raise exception 'line items are locked once a budget is approved'; end if;
+    end if;
+  end loop;
+  for o in select * from jsonb_array_elements(oldv) loop
+    if not exists (select 1 from jsonb_array_elements(new.value) e where e->>'id' = o->>'id') and coalesce(o->>'status','draft') <> 'draft' then raise exception 'only draft budgets can be removed'; end if;
+  end loop;
+  return new;
+end $$;
+revoke all on function private.guard_budgets() from public, anon, authenticated;
+drop trigger if exists kv_guard_budgets on public.kv;
+create trigger kv_guard_budgets before insert or update on public.kv for each row when (new.key = 'ops:budgets') execute function private.guard_budgets();
