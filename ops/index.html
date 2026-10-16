@@ -574,7 +574,7 @@ const STAFF_NAME_KEY = 'ops:staff_name';
 const STAFF_ROLE_KEY = 'ops:staff_role';
 /* Staff roles: which screens a role can open, and which records it can change.
    This is a preview of the permission model. Real enforcement needs sign-in and server rules. */
-const ALL_VIEWS = ["dashboard", "schedule", "requests", "members", "applications", "circles", "spaces", "events", "bookings", "vendors", "reservations", "classes", "talent", "tables", "locations", "jobs", "providers", "budgets", "inventory", "roster", "shifts", "revenue"];
+const ALL_VIEWS = ["dashboard", "schedule", "requests", "members", "applications", "circles", "spaces", "events", "bookings", "vendors", "reservations", "classes", "talent", "tables", "locations", "jobs", "providers", "budgets", "inventory", "roster", "shifts", "revenue", "reports"];
 const ROLES = {
   ceo: {label:"CEO", blurb:"Sees and edits everything. Can view the app as any role.", views:ALL_VIEWS, reads:"*", write:"*"},
   concierge: {label:"Concierge", blurb:"Answers member requests, runs room bookings and event check-in.", views:["dashboard", "schedule", "requests", "members", "bookings", "spaces", "events", "talent"], reads:["requests", "members", "bookings", "spaces", "events", "rsvps", "talent", "locations", "tickets"], write:["requests", "bookings", "rsvps", "tickets"]},
@@ -2782,6 +2782,7 @@ const NAV = [
   {id:'roster', label:'Staff Roster', icon:ICON.members},
   {id:'shifts', label:'Shifts', icon:ICON.bookings},
   {id:'revenue', label:'Revenue', icon:ICON.wallet},
+  {id:'reports', label:'Reports', icon:ICON.download},
 ];
 
 /* ---------------- Shell ---------------- */
@@ -2852,6 +2853,7 @@ const VIEW_META = {
   shifts:{title:'Shifts', sub:'Who is working, when, and what it costs'},
   house:{title:'House', sub:''},
   revenue:{title:'Revenue', sub:'Dues, tickets, bookings and sales by house, feeding profit'},
+  reports:{title:'Reports', sub:'Monthly profit and loss by house, with CSV and PDF export'},
 };
 
 function renderView(){
@@ -2881,6 +2883,12 @@ function renderView(){
     actionsEl.innerHTML=`<button class="btn btn-ghost btn-sm" data-action="house-back">← All locations</button>`;
     root.innerHTML = renderHouse();
     document.querySelectorAll('.navitem').forEach(b=>b.classList.toggle('active', b.dataset.view==='locations'));
+    return;
+  }
+  if(state.view==='reports'){
+    actionsEl.innerHTML = `<button class="btn btn-ghost btn-sm" data-action="report-csv">${ICON.download}<span>CSV</span></button><button class="btn btn-primary btn-sm" data-action="report-pdf">${ICON.download}<span>PDF</span></button>`;
+    root.innerHTML = renderReports();
+    document.querySelectorAll('.navitem').forEach(b=>b.classList.toggle('active', b.dataset.view===state.view));
     return;
   }
   const schema = SCHEMAS[state.view];
@@ -3438,6 +3446,7 @@ document.addEventListener('click', (e)=>{
   if(action==='open-budget'){ state.modal = {type:'budget', id:el.dataset.id}; renderModal(); return; }
   if(dhHouseAction(action, el)) return;
   if(dhHouseOverviewAction(action, el)) return;
+  if(dhReportAction(action, el)) return;
   if(dhBudgetAction(action, el)) return;
   if(dhFinanceAction(action, el)) return;
   if(dhProviderDocsAction(action, el)) return;
@@ -3907,6 +3916,90 @@ computeInsights = function(){
     lines:[{id:'bl-1',category:'Food & Beverage',description:'Plated dinner for 120',planned:11000},{id:'bl-2',category:'Venue & Rentals',description:'',planned:6500},{id:'bl-3',category:'AV & Production',description:'',planned:3500},{id:'bl-4',category:'Decor & Florals',description:'',planned:3500}],
     expenses:[], approvalLog:[{at:iso(Date.now()-2*day), by:'Ngozi Eze', what:'Submitted for approval', amount:24500}]});
 })();
+
+/* ============ Reports: monthly profit and loss ============ */
+function reportMonths(){ const out=[]; const d=new Date(); for(let i=0;i<12;i++){ const m=new Date(d.getFullYear(), d.getMonth()-i, 1); out.push(m.getFullYear()+'-'+String(m.getMonth()+1).padStart(2,'0')); } return out; }
+function monthLabel(key){ const [y,m]=key.split('-').map(Number); return new Date(y,m-1,1).toLocaleString('en-US',{month:'long',year:'numeric'}); }
+function reportData(key, house){
+  const houses = house && house!=='all' ? [house] : [...cityOptions(),'Ecosystem-wide'];
+  const fin = houses.map(h=>houseFinancials(h,'ym:'+key));
+  const rows = (kind)=>{ const labels=[]; fin.forEach(f=>Object.keys(f[kind]).forEach(k=>{ if(!labels.includes(k)) labels.push(k); }));
+    return labels.sort().map(l=>{ const vals=fin.map(f=>f[kind][l]||0); return {label:l, vals, total:vals.reduce((a,b)=>a+b,0)}; }); };
+  const revRows = rows('revParts'), costRows = rows('costParts');
+  const revT = fin.map(f=>f.revenue), costT = fin.map(f=>f.cost), net = fin.map(f=>f.profit);
+  const sum = a=>a.reduce((x,y)=>x+y,0);
+  const [y,m] = key.split('-').map(Number); const pd = new Date(y,m-2,1); const pkey = pd.getFullYear()+'-'+String(pd.getMonth()+1).padStart(2,'0');
+  const pf = houses.map(h=>houseFinancials(h,'ym:'+pkey));
+  const buds = (state.data.budgets||[]).filter(b=>!house||house==='all'||(b.location||'Ecosystem-wide')===house).map(b=>{ const s=budgetSpend(b), f=budgetForecast(b); return {name:b.name, house:b.location||'Ecosystem-wide', status:BSTATUS[bStatus(b)][1], approved:bStatus(b)==='approved'||bStatus(b)==='closed'?s.cap:0, spent:s.spent, forecast:f.worst}; });
+  return {key, label:monthLabel(key), houses, revRows, costRows, revT, costT, net, totals:{rev:sum(revT), cost:sum(costT), net:sum(net)}, prior:{label:monthLabel(pkey), rev:sum(pf.map(f=>f.revenue)), cost:sum(pf.map(f=>f.cost)), net:sum(pf.map(f=>f.profit))}, projected:sum(fin.map(f=>f.projected)), buds};
+}
+function reportCSV(r){
+  const out=[]; const row=(...c)=>out.push(c.map(csvEscape).join(','));
+  row('Diaspora House profit and loss', r.label); row('Prepared', new Date().toISOString().slice(0,10)); row();
+  row('Line', ...r.houses, 'Total');
+  row('REVENUE'); r.revRows.forEach(x=>row(x.label, ...x.vals.map(v=>v.toFixed(2)), x.total.toFixed(2))); row('Total revenue', ...r.revT.map(v=>v.toFixed(2)), r.totals.rev.toFixed(2)); row();
+  row('COSTS'); r.costRows.forEach(x=>row(x.label, ...x.vals.map(v=>v.toFixed(2)), x.total.toFixed(2))); row('Total costs', ...r.costT.map(v=>v.toFixed(2)), r.totals.cost.toFixed(2)); row();
+  row('Net profit', ...r.net.map(v=>v.toFixed(2)), r.totals.net.toFixed(2));
+  row('Previous month net ('+r.prior.label+')', ...r.houses.map(()=>''), r.prior.net.toFixed(2)); row();
+  row('Budget','House','Status','Approved','Spent to date','Forecast'); r.buds.forEach(b=>row(b.name,b.house,b.status,b.approved.toFixed(2),b.spent.toFixed(2),b.forecast.toFixed(2)));
+  return out.join('\n');
+}
+function reportTableHTML(r, forPrint){
+  const th = forPrint ? 'text-align:right;padding:6px 8px;border-bottom:2px solid #333;font-size:11px;' : 'text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--text-faint);font-weight:500;';
+  const td = forPrint ? 'text-align:right;padding:5px 8px;border-bottom:1px solid #ddd;font-size:12px;' : 'text-align:right;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;';
+  const tl = forPrint ? 'text-align:left;padding:5px 8px;border-bottom:1px solid #ddd;font-size:12px;' : 'text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;';
+  const bad = forPrint ? '#b00020' : 'var(--bad)', good = forPrint ? '#1b6b3a' : 'var(--good)';
+  const sect = t=>`<tr><td colspan="${r.houses.length+2}" style="${tl}font-weight:600;letter-spacing:.06em;text-transform:uppercase;font-size:11px;padding-top:14px;">${t}</td></tr>`;
+  const line = (x,bold)=>`<tr><td style="${tl}${bold?'font-weight:600;':''}">${esc(x.label)}</td>${x.vals.map(v=>`<td style="${td}${bold?'font-weight:600;':''}">${v?money(v):'—'}</td>`).join('')}<td style="${td}font-weight:600;">${x.total?money(x.total):'—'}</td></tr>`;
+  const netc = v=>`color:${v<0?bad:good};`;
+  return `<table style="width:100%;border-collapse:collapse;"><thead><tr><th style="${th}text-align:left;">Line</th>${r.houses.map(h=>`<th style="${th}">${esc(h)}</th>`).join('')}<th style="${th}">Total</th></tr></thead><tbody>
+    ${sect('Revenue')}${r.revRows.map(x=>line(x)).join('')||`<tr><td colspan="${r.houses.length+2}" style="${tl}color:#888;">No revenue recorded this month.</td></tr>`}${line({label:'Total revenue',vals:r.revT,total:r.totals.rev},true)}
+    ${sect('Costs')}${r.costRows.map(x=>line(x)).join('')||`<tr><td colspan="${r.houses.length+2}" style="${tl}color:#888;">No costs recorded this month.</td></tr>`}${line({label:'Total costs',vals:r.costT,total:r.totals.cost},true)}
+    <tr><td style="${tl}font-weight:700;border-top:2px solid ${forPrint?'#333':'var(--text)'};">Net profit</td>${r.net.map(v=>`<td style="${td}font-weight:700;border-top:2px solid ${forPrint?'#333':'var(--text)'};${netc(v)}">${money(v)}</td>`).join('')}<td style="${td}font-weight:700;border-top:2px solid ${forPrint?'#333':'var(--text)'};${netc(r.totals.net)}">${money(r.totals.net)}</td></tr>
+  </tbody></table>`;
+}
+function reportBudgetsHTML(r, forPrint){
+  if(!r.buds.length) return '';
+  const td = forPrint ? 'padding:5px 8px;border-bottom:1px solid #ddd;font-size:12px;' : 'padding:7px 10px;border-bottom:1px solid var(--line);font-size:12.5px;';
+  return `<table style="width:100%;border-collapse:collapse;"><thead><tr>${['Budget','House','Status','Approved','Spent to date','Forecast'].map((h,i)=>`<th style="${td}text-align:${i>2?'right':'left'};font-weight:600;${forPrint?'border-bottom:2px solid #333;':'color:var(--text-faint);font-weight:500;'}">${h}</th>`).join('')}</tr></thead><tbody>
+    ${r.buds.map(b=>`<tr><td style="${td}">${esc(b.name)}</td><td style="${td}">${esc(b.house)}</td><td style="${td}">${esc(b.status)}</td><td style="${td}text-align:right;">${b.approved?money(b.approved):'—'}</td><td style="${td}text-align:right;">${money(b.spent)}</td><td style="${td}text-align:right;">${money(b.forecast)}</td></tr>`).join('')}</tbody></table>`;
+}
+function renderReports(){
+  const months = reportMonths(); if(!months.includes(state.reportMonth)) state.reportMonth = months[0];
+  const house = state.reportHouse||'all'; const r = reportData(state.reportMonth, house);
+  const i = months.indexOf(state.reportMonth);
+  const pill = (h,l)=>`<button class="pill ${house===h?'on':'tag'}" data-action="report-house" data-h="${esc(h)}" style="cursor:pointer;">${esc(l)}</button>`;
+  const delta = (cur,prev)=> prev ? (cur-prev>=0?'+':'−')+money(Math.abs(cur-prev))+' vs '+r.prior.label : 'no earlier month to compare';
+  return `<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+      <button class="iconbtn" data-action="report-step" data-d="1" ${i>=months.length-1?'disabled':''} title="Earlier month">‹</button>
+      <div style="font-weight:600;min-width:150px;text-align:center;">${esc(r.label)}</div>
+      <button class="iconbtn" data-action="report-step" data-d="-1" ${i<=0?'disabled':''} title="Later month">›</button>
+      <span style="width:12px;"></span>${pill('all','All houses')}${[...cityOptions(),'Ecosystem-wide'].map(h=>pill(h,h)).join('')}
+    </div>
+    <div class="kpi-grid" style="margin-bottom:16px;">${tile(money(r.totals.rev),'Revenue',delta(r.totals.rev,r.prior.rev))}${tile(money(r.totals.cost),'Costs',delta(r.totals.cost,r.prior.cost))}${tile(money(r.totals.net),'Net profit',delta(r.totals.net,r.prior.net),r.totals.net<0?'var(--bad)':'var(--good)')}${tile(money(r.projected),'Projected, not yet booked')}</div>
+    <div class="tablewrap" style="margin-bottom:18px;overflow-x:auto;"><div class="panel-head">Profit and loss · ${esc(r.label)}</div>${reportTableHTML(r,false)}</div>
+    ${r.buds.length?`<div class="tablewrap" style="margin-bottom:18px;overflow-x:auto;"><div class="panel-head">Budgets</div>${reportBudgetsHTML(r,false)}</div>`:''}
+    <p style="font-size:11.5px;color:var(--text-faint);">Revenue and costs come from the same records as the Revenue and Budgets screens: member dues, ticket orders, completed provider jobs, completed staff shifts and logged budget expenses dated in the month. Projected amounts are excluded.</p>`;
+}
+function reportPrintHTML(r){
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Diaspora House P&amp;L ${esc(r.label)}</title><style>body{font-family:Georgia,serif;color:#111;margin:32px;}h1{font-size:20px;margin:0 0 2px;}h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;margin:26px 0 8px;}p{font-size:11px;color:#555;}@media print{body{margin:14mm;}}</style></head><body>
+  <p style="letter-spacing:.2em;text-transform:uppercase;color:#8a6d2f;margin:0;">Diaspora House</p><h1>Profit and loss · ${esc(r.label)}</h1><p>${esc(r.houses.length>1?'All houses':r.houses[0])} · prepared ${new Date().toLocaleDateString('en-US')} · net profit ${money(r.totals.net)} (${esc(r.prior.label)}: ${money(r.prior.net)})</p>
+  ${reportTableHTML(r,true)}${r.buds.length?`<h2>Budgets</h2>${reportBudgetsHTML(r,true)}`:''}<p style="margin-top:18px;">Projected income not included: ${money(r.projected)}.</p></body></html>`;
+}
+function dhReportAction(action, el){
+  if(action==='report-step'){ const m=reportMonths(); const i=Math.max(0,Math.min(m.length-1, m.indexOf(state.reportMonth||m[0])+Number(el.dataset.d))); state.reportMonth=m[i]; render(); return true; }
+  if(action==='report-house'){ state.reportHouse=el.dataset.h; render(); return true; }
+  if(action==='report-csv'){ const r=reportData(state.reportMonth||reportMonths()[0], state.reportHouse||'all'); downloadText('diaspora-house-pnl-'+r.key+'.csv', reportCSV(r)); return true; }
+  if(action==='report-pdf'){
+    const r=reportData(state.reportMonth||reportMonths()[0], state.reportHouse||'all');
+    const win = window.open('', '_blank');
+    if(!win){ toast('Allow pop-ups for this page, then try again. Choose “Save as PDF” in the print window.'); return true; }
+    win.document.open(); win.document.write(reportPrintHTML(r)); win.document.close(); win.focus();
+    setTimeout(()=>{ try{ win.print(); }catch(e){} }, 300);
+    return true;
+  }
+  return false;
+}
 
 async function bootGate(){
   if(authMode()){
