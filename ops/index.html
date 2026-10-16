@@ -1633,7 +1633,7 @@ function houseModalHTML(){
           ${tile(lowN,'Items to reorder',inv.length+' tracked',lowN?'var(--warn)':'')}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">${link('Budgets','budgets')}${link('Inventory','inventory')}${link('Shifts','shifts')}${link('Staff','roster')}${link('Spaces','spaces')}</div>
-        ${spaces.length===0?`<div style="border:1px dashed var(--line);border-radius:8px;padding:14px;margin-bottom:14px;"><p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">${esc(city)} has no spaces yet. Start with one space in each of the three wings, then rename and adjust them.</p><button class="btn btn-primary btn-sm" data-action="house-add-wings" data-id="${esc(loc.id)}">${ICON.plus}<span>Add the three wings</span></button></div>`:''}
+        ${spaces.length===0?`<div style="border:1px dashed var(--line);border-radius:8px;padding:14px;margin-bottom:14px;"><p style="font-size:12.5px;color:var(--text-dim);margin:0 0 10px;">${esc(city)} has no spaces yet. Every house carries the same standard rooms (Faraday Boardroom, Griot Pit, Ancestral Kitchen and the rest). Add them, then adjust this house's copy.</p><button class="btn btn-primary btn-sm" data-action="house-add-wings" data-id="${esc(loc.id)}">${ICON.plus}<span>Add the standard rooms</span></button></div>`:''}
         ${HOUSE_WINGS.map(wg=>{ const list=spaces.filter(s=>s.wing===wg); return `
           <div style="margin-bottom:14px;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><h3 style="font-size:13px;margin:0;">${esc(wg)}</h3><button class="btn btn-ghost btn-sm" data-action="house-add-space" data-id="${esc(loc.id)}" data-wing="${esc(wg)}">${ICON.plus}<span>Add space</span></button></div>
@@ -1672,6 +1672,7 @@ function reorderModalHTML(){
 }
 
 /* ---- actions ---- */
+['spaces-sync-all'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='spaces'; });
 ['stock-apply','shift-complete','house-add-space','house-add-wings'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a] = a.startsWith('shift')?'shifts':(a==='stock-apply'?'inventory':'spaces'); });
 function dhHouseAction(action, el){
   const id = el.dataset.id;
@@ -1695,13 +1696,17 @@ function dhHouseAction(action, el){
     const sh=state.data.shifts.find(x=>x.id===id); if(!sh) return true;
     sh.status='completed'; touch(sh); persist('shifts'); logActivity('updated','shifts',`${sh.staffName} ${sh.date} → completed`); toast('Shift marked complete.'); render(); return true;
   }
+  if(action==='spaces-sync-all'){
+    let n=0; (state.data.locations||[]).forEach(l=>{ const add=standardSpaceRecords(l.city, state.data.spaces); state.data.spaces.push(...add); n+=add.length; });
+    if(n){ persist('spaces'); logActivity('added','spaces',`${n} standard rooms added across houses`); }
+    toast(n?`${n} standard rooms added so every house has the full set.`:'Every house already has the full set.'); render(); return true;
+  }
   if(action==='house-add-space' || action==='house-add-wings'){
     const loc=state.data.locations.find(l=>l.id===id); if(!loc) return true;
     const mk=(wing,name,cap)=>({id:uid('space'), name, wing, location:loc.city, capacity:cap, exclusive:true, tags:[], amenities:[], addons:[], rules:'', desc:'', status:'active', updatedAt:new Date().toISOString()});
     if(action==='house-add-wings'){
-      const starters={'Engine Room':[loc.city+' Boardroom',8],'Culinary & Connection':[loc.city+' Kitchen',10],'Performance & Wellness':[loc.city+' Recovery Suite',2]};
-      HOUSE_WINGS.forEach(wg=>{ if(!state.data.spaces.some(s=>s.location===loc.city && s.wing===wg)) state.data.spaces.push(mk(wg, starters[wg][0], starters[wg][1])); });
-      persist('spaces'); logActivity('added','spaces',`${loc.city}: starter wings`); toast('Three starter spaces added. Rename them to fit.'); render(); return true;
+      const add=standardSpaceRecords(loc.city, state.data.spaces); state.data.spaces.push(...add);
+      persist('spaces'); logActivity('added','spaces',`${loc.city}: ${add.length} standard rooms`); toast(add.length?`${add.length} standard rooms added to ${loc.city}.`:`${loc.city} already has every standard room.`); render(); return true;
     }
     const rec=mk(el.dataset.wing, 'New '+el.dataset.wing+' space', 0); state.data.spaces.push(rec); persist('spaces'); logActivity('added','spaces',rec.name);
     state.modal={type:'edit', entity:'spaces', id:rec.id}; render(); return true;
@@ -1750,17 +1755,17 @@ renderDashboard = function(){
 };
 
 /* ---- sample data: spaces per house, staff, shifts, inventory, budgets ---- */
-SEED.spaces.forEach(sp=>{ sp.location = 'New York City'; });
+/* Every house has the same standard set of rooms (names, wings and rules are the template; each house can then edit its own copy) */
+const STANDARD_SPACES = [{"id":"faraday","name":"The Faraday Boardroom","wing":"Engine Room","capacity":8,"exclusive":true,"tags":["Private","8 seats","Encrypted"],"amenities":["RF-shielded walls","Encrypted local network only","Biometric door lock","4K secure conferencing"],"addons":["Legal counsel on standby","Live interpreter","Court reporter / transcript"],"rules":"Devices are screened at the door. Nothing said in this room is repeated outside it — by staff or by members.","desc":"Signal-proof, encrypted meeting room for negotiations, M&A, and diplomatic conversations that cannot leave the room."},{"id":"griot","name":"The Griot Pit","wing":"Culinary & Connection","capacity":24,"exclusive":false,"tags":["Communal","24 seats","No stage"],"amenities":["Sunken circular seating","House sound system","No stage — eye level only"],"addons":["Live musician booking","Professional recording of the session"],"rules":"No stage means no hierarchy — performers and listeners sit at the same level. Recording requires everyone's consent.","desc":"A sunken, circular gathering space inspired by the palaver tree — for poetry, live acoustic sets, and elders passing down wisdom."},{"id":"kitchen","name":"The Ancestral Kitchen","wing":"Culinary & Connection","capacity":10,"exclusive":true,"tags":["Private","Chef assist","Family"],"amenities":["Full domestic kitchen","Regional pantry stocked on request","Sous chef for prep & cleanup"],"addons":["Sous chef assist","Dietary / allergen accommodation","Ingredient sourcing (hard-to-find regional items)"],"rules":"Bring the recipe, even if it's just memory and instinct — the sous chef translates it into method, not the other way around.","desc":"A private, bookable domestic kitchen for cooking a family recipe with a Club sous chef handling prep and cleanup."},{"id":"biohack","name":"The Bio-Hacking Suite","wing":"Performance & Wellness","capacity":2,"exclusive":true,"tags":["Wellness","Solo/Pair","90 min"],"amenities":["Infrared sauna","Cold plunge","Hyperbaric chamber","Oura / Whoop sync"],"addons":["Recovery specialist on-site","Personalized Homecoming Protocol build"],"rules":"Medical questionnaire on first visit. Please arrive hydrated; the specialist will walk you through sequencing.","desc":"Infrared sauna, cold plunge, and hyperbaric chamber — home of the Homecoming Jet-Lag Protocol."},{"id":"scent","name":"The Scent of Home Room","wing":"Performance & Wellness","capacity":1,"exclusive":true,"tags":["Solo","10–20 min","Sensory"],"amenities":["Custom scent diffusion","Low lighting, sound dampened","Tuned to your saved Scent Profile"],"addons":[],"rules":"Walk-ins welcome if unbooked — but reserving guarantees your saved profile is already running when you arrive.","desc":"A sensory-grounding room that shifts scent profile to a chosen region for a 10-minute mental reset."},{"id":"portal","name":"The Global South Portal","wing":"Engine Room","capacity":6,"exclusive":false,"tags":["Telepresence","2–6 seats"],"amenities":["360° telepresence rig","Direct link to 4 sister houses","Real-time translation available"],"addons":["Technical producer","Real-time translation staffing"],"rules":"Sister-house link requests need 24 hours' notice so the receiving House can staff the room too.","desc":"A 360° telepresence lounge, live-linked to sister houses in Lagos, Nairobi, Accra, and Johannesburg."},{"id":"shadow","name":"The Shadow Studio","wing":"Engine Room","capacity":1,"exclusive":true,"tags":["Solo","Private","Voice-to-book"],"amenities":["Soundproofed, no-window focus room","Voice-to-manuscript AI editor","No phone signal by design"],"addons":["AI ghostwriter session","Professional editor review of output"],"rules":"This room has no clock on the wall on purpose. Staff will knock once, gently, at your booked end time.","desc":"A distraction-free 'monk mode' suite with an AI editor that turns spoken thought into manuscript or keynote."},{"id":"elders","name":"The Elders' Parlor","wing":"Performance & Wellness","capacity":12,"exclusive":false,"tags":["Family","Quiet","Tea service"],"amenities":["Higher seat heights","Warmer lighting & temperature","Buna & mint tea service"],"addons":["Tea service","Wheelchair-accessible entry escort"],"rules":"This is the one room in the House kept deliberately quiet — phone calls are asked to step out.","desc":"Warmer, quieter, higher seat heights. Traditional Buna and mint tea service for members bringing parents or grandparents."},{"id":"war","name":"The War Room","wing":"Engine Room","capacity":6,"exclusive":false,"tags":["Trading floor","6 seats"],"amenities":["Live NGX / JSE / GSE tickers","Secure satellite link","Bloomberg-style terminal access"],"addons":["Trading analyst briefing","Custom market research pull"],"rules":"Terminal access is logged per member for compliance — standard across every House location.","desc":"Live tickers on NGX, JSE, GSE and key commodities, with secure satellite links for cross-border deal-making."},{"id":"atelier","name":"The Trad-Wear Atelier","wing":"Performance & Wellness","capacity":4,"exclusive":true,"tags":["Styling","Vault storage"],"amenities":["Climate-controlled fabric vault","Personal styling mirror suite","On-site tailoring & repair"],"addons":["Personal stylist","Tailoring & repair","Vault storage for your pieces"],"rules":"Heirloom pieces are logged and insured for the duration they're stored in the vault.","desc":"Climate-controlled vault and styling suite for Agbadas, Kente, and Kaftans, with expert draping and repair."}];
+const slugCity = c=>String(c).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+function standardSpaceRecords(city, existing){
+  return STANDARD_SPACES.filter(t=>!(existing||[]).some(x=>x.location===city && (x.templateId===t.id || x.name===t.name)))
+    .map(t=>Object.assign(JSON.parse(JSON.stringify(t)), {id: city==='New York City' ? t.id : t.id+'-'+slugCity(city), templateId:t.id, location:city, status:'active'}))
+    .filter(r=>!(existing||[]).some(x=>x.id===r.id));
+}
+SEED.spaces = [];
+SEED.locations.forEach(l=>SEED.spaces.push(...standardSpaceRecords(l.city, SEED.spaces)));
 (function(){
-  const mk=(id,name,wing,cap,excl,tags,amen,addons)=>({id,name,wing,location:'Dallas',capacity:cap,exclusive:excl,tags,amenities:amen,addons,rules:'',desc:'Sample space',status:'active'});
-  SEED.spaces.push(
-    mk('dal-board','Dallas Boardroom','Engine Room',10,true,['Private','10 seats'],['Video wall','Secure Wi-Fi'],['Legal counsel on standby']),
-    mk('dal-deal','The Deal Room','Engine Room',6,true,['Private','6 seats'],['Whiteboard wall'],[]),
-    mk('dal-kitchen','Dallas Test Kitchen','Culinary & Connection',12,true,['Private','Chef assist'],['Full kitchen','Regional pantry'],['Sous chef assist']),
-    mk('dal-table','The Long Table','Culinary & Connection',24,false,['Communal','24 seats'],['Seated dining','House sound'],['Chef experience booking']),
-    mk('dal-recovery','The Recovery Suite','Performance & Wellness',2,true,['Wellness','Solo/Pair'],['Infrared sauna','Cold plunge'],['Recovery specialist on-site']),
-    mk('dal-studio','Movement Studio','Performance & Wellness',14,false,['Shared','14 spots'],['Sprung floor','Mirrors'],['Private trainer'])
-  );
   const iso = ms => new Date(ms).toISOString(), now = Date.now(), day = 86400000, ymd = off => localISO(new Date(now+off*day));
   const L='Dallas', N='New York City';
   const R = (n,id,name,title,role,loc,type,rate,target,avail,phone) => ({id:'stf-000'+n, name, title, role, location:loc, type, rate, weeklyTarget:target, phone, email:name.toLowerCase().replace(/[^a-z]+/g,'.')+'@example.com', availability:avail, status:'active', notes:'Sample data'});
@@ -2892,7 +2897,7 @@ function renderView(){
     return;
   }
   const schema = SCHEMAS[state.view];
-  actionsEl.innerHTML = canWrite(state.view) ? `<button class="btn btn-primary btn-sm" data-action="open-edit" data-entity="${state.view}">${ICON.plus}<span>Add ${esc(schema.label)}</span></button>` : `<span class="pill" style="font-size:11px;">View only</span>`;
+  actionsEl.innerHTML = canWrite(state.view) ? (state.view==='spaces'?`<button class="btn btn-ghost btn-sm" data-action="spaces-sync-all" title="Give every house any standard room it is missing"><span>Add standard rooms to every house</span></button> `:'')+`<button class="btn btn-primary btn-sm" data-action="open-edit" data-entity="${state.view}">${ICON.plus}<span>Add ${esc(schema.label)}</span></button>` : `<span class="pill" style="font-size:11px;">View only</span>`;
   root.innerHTML = renderTable(state.view);
   document.querySelectorAll('.navitem').forEach(b=>b.classList.toggle('active', b.dataset.view===state.view));
 }
@@ -3536,6 +3541,7 @@ document.addEventListener('click', (e)=>{
         record.history = [{stage:record.status, by:state.staffName||'Unknown staff', at:new Date().toISOString()}];
       }
       state.data[entity].push(record);
+      if(entity==='locations' && record.city && canWrite('spaces')){ const add=standardSpaceRecords(record.city, state.data.spaces); if(add.length){ state.data.spaces.push(...add); persist('spaces'); logActivity('added','spaces',`${record.city}: ${add.length} standard rooms`); } }
       toast(`${schema.label} added.`);
       logActivity('added', entity, recordLabel(entity, record));
     }

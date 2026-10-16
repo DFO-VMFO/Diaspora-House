@@ -1544,7 +1544,7 @@ function scrollTutorChatToBottom(){
 
 /* ---------------- View: Spaces ---------------- */
 /* ---------------- Space helpers ---------------- */
-SPACES.forEach(s=>{ if(!s.location) s.location = 'New York City'; });
+SPACES.forEach(s=>{ if(!s.location) s.location = 'New York City'; s.templateId = s.templateId||s.id; });
 const STATIC_SPACES = SPACES.map(s=>Object.assign({}, s));
 const WING_ICON = {'Engine Room':'faraday','Culinary & Connection':'griot','Performance & Wellness':'biohack'};
 const SPACE_WINGS = ["All","Engine Room","Culinary & Connection","Performance & Wellness"];
@@ -1947,11 +1947,11 @@ async function hydrateShared(){
   const sps = await sget('ops:spaces');
   if(Array.isArray(sps) && sps.length){
     const next = sps.filter(r=>r && r.id && r.name).map(r=>{
-      const st = STATIC_SPACES.find(x=>x.id===r.id) || {};
+      const st = STATIC_SPACES.find(x=>x.id===(r.templateId||r.id)) || {};
       const wing = r.wing || (st.level ? wingOf(st) : 'Engine Room');
       const cap = Number(r.capacity)||st.capacity||0;
       return Object.assign({icon:WING_ICON[wing]||'faraday', idealFor:[], tags:[], amenities:[], addons:[], rules:'', desc:'', exclusive:false}, st, r,
-        {capacity:cap, wing, level:((st.level||'House').split(' — ')[0])+' — '+wing, location:r.location||st.location||'New York City', maintenance:r.status==='maintenance', icon:st.icon||WING_ICON[wing]||'faraday'});
+        {templateId:r.templateId||st.id||r.id, capacity:cap, wing, level:((st.level||'House').split(' — ')[0])+' — '+wing, location:r.location||st.location||'New York City', maintenance:r.status==='maintenance', icon:st.icon||WING_ICON[wing]||'faraday'});
     });
     const sig = x => JSON.stringify(x.map(s=>[s.id,s.name,s.location,s.wing,s.capacity,s.exclusive,s.maintenance,s.desc,s.tags,s.amenities,s.addons,s.rules]));
     if(sig(next)!==sig(SPACES)){ SPACES.length = 0; next.forEach(s=>SPACES.push(s)); spacesChanged = true; }
@@ -2878,8 +2878,8 @@ function renderModal(){
   }
   if(state.modal.type==='space'){
     const s = SPACES.find(sp=>sp.id===state.modal.id);
-    const pairId = SPACE_PAIRINGS[s.id];
-    const pair = pairId ? SPACES.find(sp=>sp.id===pairId) : null;
+    const pairId = SPACE_PAIRINGS[s.templateId||s.id];
+    const pair = pairId ? SPACES.find(sp=>(sp.templateId||sp.id)===pairId && (sp.location||'')===(s.location||'')) : null;
     root.innerHTML = `
       <div class="modal-overlay" data-action="close-modal">
         <div class="modal" data-action="noop">
