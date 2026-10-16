@@ -24,3 +24,7 @@ Push to `main`; the workflow publishes to GitHub Pages (Settings, Pages, Source:
 - **Documents:** W-9, insurance, agreements and licenses upload to the private `provider-docs` storage bucket (CEO only) from a provider's page. Expiry dates drive dashboard alerts and the `expiry-reminders` function, which pg_cron runs daily at 14:00 UTC and which emails the provider and a digest to the CEO at 30/14/7/3 days, the day of, and after expiry.
 - **Scorecard:** computed from real job history (acceptance 35%, on-time 25%, reply speed 20%, rating 20%).
 - **Offers:** `send-offer` emails each offer with a private link to `/j/`. The provider accepts or declines there (`job-response` function) and the console applies the reply within about 20 seconds. Text and WhatsApp need a Twilio account and are not connected yet, so those providers get email.
+
+## Members (build #4)
+- **Profile:** click a member's name (or the people icon) for a profile with details, Capital Profile, and activity across requests, rooms, Souk, events, classes and service jobs.
+- **Dues:** the CEO, Membership Lead and Auditor see dues. Per member: tracking start month, a payment ledger (amount, date, method, note), and a status of Paid up, Due now, Past due or Not tracking. Dues are due on the 1st with a grace period to the 10th. Comped and paused members are set in the member form. Past-due members show on the dashboard. Payments are recorded by hand for now; card billing through Stripe is a later step.

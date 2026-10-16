@@ -1406,6 +1406,10 @@ computeInsights = function(){
     else if(j.status==='offered' && j.responseDueAt && new Date(j.responseDueAt).getTime()-Date.now() < 30*60000) a.push({level:'warn', text:`Waiting on ${j.providerName} to reply: ${j.summary}`, view:'jobs'});
     else if(['new','offered'].includes(j.status) && p && leadWarning(j,p)) a.push({level:'warn', text:`Short notice for ${p.name}: ${j.summary}`, view:'jobs'});
   });
+  if(canSeeDues()){
+    const late=(state.data.members||[]).filter(m=>duesInfo(m).state==='pastdue');
+    if(late.length){ const tot=late.reduce((t,m)=>t+duesInfo(m).balance,0); a.push({level:'warn', text:`${late.length} member${late.length>1?'s are':' is'} past due on dues (${money(tot)})`, view:'members'}); }
+  }
   (state.data.providers||[]).forEach(p=>{
     (p.docs||[]).forEach(d=>{ const n=docDays(d); if(n===null||n>30) return;
       a.push({level:n<0?'bad':'warn', text:`${p.name}: ${d.type} ${n<0?'expired '+(-n)+' day'+(n===-1?'':'s')+' ago':n===0?'expires today':'expires in '+n+' day'+(n===1?'':'s')}`, view:'providers'}); });
@@ -2184,9 +2188,105 @@ function dhFinanceAction(action, el){
    ========================================================= */
 REV_CATEGORIES.splice(1,1,'Event Tickets','Sponsorships');
 const DEFAULT_DUES = {'Founding 50':1500, 'Standard':500};
+
+/* ---- member dues, billing status and profile ---- */
+const DUES_GRACE_DAY = 10;
+const PAY_METHODS = ['Card','Bank transfer','Check','Cash','Other'];
+function canSeeDues(){ return ['ceo','membership','auditor'].includes(state.role); }
+function memberDues(m){ return Number(m.monthlyDues)||DEFAULT_DUES[m.tier]||0; }
+function ymOf(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function ymAdd(ym,n){ const a=ym.split('-').map(Number); return ymOf(new Date(a[0],a[1]-1+n,1)); }
+function ymLabel(ym){ const a=ym.split('-').map(Number); return new Date(a[0],a[1]-1,1).toLocaleDateString([], {month:'short',year:'numeric'}); }
+function ymDiff(a,b){ const x=a.split('-').map(Number), y=b.split('-').map(Number); return (y[0]-x[0])*12+y[1]-x[1]; }
+function duesInfo(m){
+  const amt=memberDues(m);
+  if(m.status!=='active') return {state:'inactive'};
+  if(m.duesMode==='comped') return {state:'comped'};
+  if(m.duesMode==='paused') return {state:'paused'};
+  if(!amt) return {state:'none'};
+  const paidTotal=(m.payments||[]).reduce((t,x)=>t+(Number(x.amount)||0),0);
+  if(!m.billingStart) return {state:'untracked', amt, paidTotal};
+  const today=new Date(), cur=ymOf(today);
+  const n=Math.max(0, ymDiff(m.billingStart,cur)+1);
+  const dueMonths = today.getDate()>DUES_GRACE_DAY ? n : Math.max(0,n-1);
+  const balance = dueMonths*amt-paidTotal;
+  const covered=Math.floor((paidTotal+0.5)/amt);
+  const st = balance>0.5 ? 'pastdue' : (covered>=n ? 'paid' : 'current');
+  return {state:st, amt, paidTotal, balance:Math.max(0,balance), monthsBehind:Math.ceil(Math.max(0,balance)/amt), paidThrough:covered>0?ymAdd(m.billingStart,covered-1):null, nextDue:ymAdd(m.billingStart,covered), billedMonths:n};
+}
+function duesCell(m){
+  const d=duesInfo(m), dim='<span style="color:var(--text-faint);">';
+  if(d.state==='pastdue') return `<span style="color:var(--bad);">Past due ${money(d.balance)}</span><div class="rowsub">${d.monthsBehind} mo behind</div>`;
+  if(d.state==='paid') return `<span style="color:var(--good);">Paid up</span><div class="rowsub">through ${ymLabel(d.paidThrough)}</div>`;
+  if(d.state==='current') return `<span style="color:var(--warn);">Due now</span><div class="rowsub">${ymLabel(d.nextDue)} · ${money(d.amt)}</div>`;
+  if(d.state==='untracked') return `${dim}Not tracking</span><div class="rowsub">${money(d.amt)}/mo</div>`;
+  if(d.state==='comped') return 'Comped'; if(d.state==='paused') return 'Paused'; if(d.state==='none') return `${dim}No dues set</span>`;
+  return `${dim}—</span>`;
+}
+function memberMatch(rec, m){ return (rec.memberNo && m.memberNo && rec.memberNo===m.memberNo) || (rec.member && rec.member===m.name); }
+function memberModalHTML(){
+  const m=(state.data.members||[]).find(x=>x.id===state.modal.id); if(!m) return '';
+  const fact=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px;"><span style="color:var(--text-faint);">${k}</span><span style="text-align:right;">${v||'—'}</span></div>`;
+  const head=t=>`<div class="modal-head" style="margin:14px 0 4px;"><h3 style="font-size:13px;">${t}</h3></div>`;
+  const can=canWrite('members');
+  let dues='';
+  if(canSeeDues()){
+    const d=duesInfo(m), pays=(m.payments||[]).slice().sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+    const label={pastdue:`<span style="color:var(--bad);">Past due ${money(d.balance)} (${d.monthsBehind} month${d.monthsBehind===1?'':'s'})</span>`, paid:`<span style="color:var(--good);">Paid up through ${d.paidThrough?ymLabel(d.paidThrough):''}</span>`, current:`<span style="color:var(--warn);">${d.nextDue?ymLabel(d.nextDue):''} dues open</span>`, untracked:'Not tracking yet', comped:'Comped, no dues', paused:'Billing paused', none:'No dues set for this tier', inactive:'Not an active member'}[d.state];
+    dues=head('Dues and billing')+`<div>${fact('Status',label)}${fact('Monthly dues',memberDues(m)?money(memberDues(m)):'')}${m.billingStart?fact('Billing since',ymLabel(m.billingStart)):''}${fact('Total received',money(d.paidTotal||0))}</div>`;
+    if(can && ['untracked'].includes(d.state)) dues+=`<div style="display:flex;gap:8px;align-items:end;margin-top:10px;"><div class="field" style="margin:0;flex:1;"><label>Start tracking from</label><input type="month" id="bill-start" value="${ymOf(new Date())}"></div><button class="btn btn-primary btn-sm" data-action="member-start-billing" data-id="${esc(m.id)}">Start tracking</button></div><div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-top:6px;">Pick the first month you want dues counted from, so older months do not show as past due.</div>`;
+    if(can && ['pastdue','current','paid'].includes(d.state)) dues+=`<div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:10px;"><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;"><div class="field" style="margin:0;"><label>Amount ($)</label><input type="number" id="pay-amount" value="${d.amt}"></div><div class="field" style="margin:0;"><label>Received</label><input type="date" id="pay-date" value="${localISO(new Date())}"></div><div class="field" style="margin:0;"><label>Method</label><select id="pay-method">${PAY_METHODS.map(x=>`<option>${x}</option>`).join('')}</select></div></div><div class="field" style="margin:10px 0;"><label>Note (optional)</label><input type="text" id="pay-note" placeholder="Invoice, check number, etc."></div><button class="btn btn-primary btn-sm" data-action="member-record-payment" data-id="${esc(m.id)}">${ICON.check}<span>Record payment</span></button></div>`;
+    dues+= pays.length ? `<div style="margin-top:10px;">${pays.slice(0,12).map(x=>`<div class="activity-row"><span>${money(x.amount)} · ${esc(x.method||'')}${x.note?' · '+esc(x.note):''}</span><span class="when">${esc(x.date)}${can?` <span data-action="member-delete-payment" data-id="${esc(m.id)}" data-pay="${esc(x.id)}" style="margin-left:8px;color:var(--text-faint);cursor:pointer;text-decoration:underline;">remove</span>`:''}</span></div>`).join('')}${pays.length>12?`<div class="mono" style="font-size:10.5px;color:var(--text-faint);">${pays.length-12} older payments not shown</div>`:''}</div>` : '';
+  }
+  const evName=id=>{ const e=(state.data.events||[]).find(x=>x.id===id); return e?e.name:'Event'; };
+  const clName=id=>{ const c=(state.data.classes||[]).find(x=>x.id===id); return c?c.name:'Class'; };
+  const acts=[
+    ...(state.data.requests||[]).filter(r=>memberMatch(r,m)).map(r=>({at:r.createdAt, t:`Request: ${r.summary}`, s:r.status})),
+    ...(state.data.bookings||[]).filter(r=>memberMatch(r,m)&&r.status!=='cancelled').map(r=>({at:r.createdAt||r.date, t:`Room: ${r.spaceName||''} on ${r.date||''}`, s:r.status})),
+    ...(state.data.reservations||[]).filter(r=>memberMatch(r,m)).map(r=>({at:r.createdAt||r.date, t:`Souk: ${r.productName||''}`, s:r.status})),
+    ...(state.data.rsvps||[]).filter(r=>memberMatch(r,m)&&r.status!=='cancelled').map(r=>({at:r.createdAt, t:`Event: ${evName(r.eventId)}`, s:r.status||'rsvp'})),
+    ...(state.data.enrollments||[]).filter(r=>memberMatch(r,m)&&r.status==='enrolled').map(r=>({at:r.createdAt, t:`Class: ${clName(r.classId)}`, s:'enrolled'})),
+    ...(state.data.jobs||[]).filter(r=>memberMatch(r,m)).map(r=>({at:r.createdAt, t:`Service: ${r.summary}`, s:r.status})),
+  ].sort((a,b)=>String(b.at||'').localeCompare(String(a.at||'')));
+  return `
+    <div class="modal-overlay" data-action="close-modal">
+      <div class="modal" data-action="noop" style="max-width:640px;">
+        <div class="modal-head"><div><h3>${esc(m.name)}</h3><div class="sub">${esc(m.memberNo||'')} · ${esc(m.tier||'')} · ${esc(m.status||'')}${m.house&&m.house!=='—'?' · '+esc(m.house):''}</div></div><button class="modal-close" data-action="close-modal">${ICON.close}</button></div>
+        ${fact('Home → based in',esc((m.home||'—')+' → '+(m.base||'—')))}${fact('Joined',esc(m.joined||''))}${fact('Guest passes',String(m.guestPasses==null?'':m.guestPasses))}${fact('Heritage Gold points',(m.points||0).toLocaleString())}
+        ${dues}
+        ${(m.building||m.need||m.bring)?head('Capital Profile')+(m.building?fact('Building',esc(m.building)):'')+(m.need?fact('Needs',esc(m.need)):'')+(m.bring?fact('Brings',esc(m.bring)):''):''}
+        ${head('Activity with the House ('+acts.length+')')}
+        ${acts.length?acts.slice(0,10).map(a=>`<div class="activity-row"><span>${esc(a.t)}</span><span class="when">${esc(a.s||'')}${a.at?' · '+timeAgo(a.at):''}</span></div>`).join(''):'<div class="empty" style="padding:8px 0;">Nothing yet.</div>'}
+        <div class="modal-foot"><div></div>${can?`<button class="btn btn-ghost btn-sm" data-action="open-edit" data-entity="members" data-id="${esc(m.id)}">${ICON.edit}<span>Edit member</span></button>`:'<div></div>'}</div>
+      </div>
+    </div>`;
+}
+['member-start-billing','member-record-payment','member-delete-payment'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='members'; });
+function dhMemberAction(action, el){
+  if(action==='open-member'){ state.modal={type:'member', id:el.dataset.id}; renderModal(); return true; }
+  if(!['member-start-billing','member-record-payment','member-delete-payment'].includes(action)) return false;
+  const m=(state.data.members||[]).find(x=>x.id===el.dataset.id); if(!m) return true;
+  if(!canSeeDues()){ toast('Only the CEO, Membership Lead and Auditor see dues.'); return true; }
+  if(action==='member-start-billing'){
+    const v=document.getElementById('bill-start').value; if(!/^\d{4}-\d{2}$/.test(v)){ toast('Pick a month.'); return true; }
+    m.billingStart=v; touch(m); persist('members'); logActivity('updated','members',`${m.name}: dues tracking from ${ymLabel(v)}`); render(); return true;
+  }
+  if(action==='member-record-payment'){
+    const amount=Number(document.getElementById('pay-amount').value)||0; if(amount<=0){ toast('Enter the amount received.'); return true; }
+    const date=document.getElementById('pay-date').value||localISO(new Date());
+    (m.payments=m.payments||[]).push({id:uid('pay'), amount, date, method:document.getElementById('pay-method').value, note:document.getElementById('pay-note').value.trim(), by:state.staffName||'Staff'});
+    touch(m); persist('members'); logActivity('updated','members',`${m.name}: ${money(amount)} dues received`); toast('Payment recorded.'); render(); return true;
+  }
+  if(!window.confirm('Remove this payment record?')) return true;
+  m.payments=(m.payments||[]).filter(x=>x.id!==el.dataset.pay); touch(m); persist('members'); logActivity('updated','members',`${m.name}: payment record removed`); render(); return true;
+}
+
 SCHEMAS.members.fields.push(
   {key:'house', label:'House / location (for dues and profit)', type:'select', options:()=>['—',...cityOptions()]},
-  {key:'monthlyDues', label:'Monthly dues ($, blank = tier default)', type:'number'});
+  {key:'monthlyDues', label:'Monthly dues ($, blank = tier default)', type:'number'},
+  {key:'duesMode', label:'Dues billing', type:'select', options:['billed','comped','paused']});
+SCHEMAS.members.columns[0].render = m=>`<div class="rowtitle" data-action="open-member" data-id="${esc(m.id)}" style="cursor:pointer;text-decoration:underline dotted;text-underline-offset:3px;" title="Open member profile">${esc(m.name)}</div><div class="rowsub">${esc(m.memberNo||'—')} · ${esc(m.tier||'—')}</div>`;
+SCHEMAS.members.columns.splice(3,0,{header:'Dues', render:m=>canSeeDues()?duesCell(m):'<span style="color:var(--text-faint);">—</span>'});
 SCHEMAS.events.fields.push(
   {key:'location', label:'House / location', type:'select', options:()=>['—',...cityOptions()]},
   {key:'ticketPrice', label:'Ticket price per seat ($)', type:'number'});
@@ -2361,6 +2461,14 @@ function dhHouseOverviewAction(action, el){
 (function(){
   const house={'mem-0001':'New York City','mem-0002':'New York City','mem-0003':'New York City','mem-0004':'Dallas','mem-0005':'Johannesburg'};
   SEED.members.forEach(m=>{ if(house[m.id]) m.house=house[m.id]; });
+  /* sample dues history so the billing screens have something to show */
+  (function(){ const d=new Date(), ym=n=>{ const x=new Date(d.getFullYear(), d.getMonth()-n, 1); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0'); };
+    const pay=(m,n,amt)=>({id:'pay-'+m+'-'+n, amount:amt, date:ym(n)+'-03', method:'Card', note:'Sample', by:'System'});
+    SEED.members.forEach(m=>{
+      if(m.id==='mem-0001'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500),pay(m.id,1,1500),pay(m.id,0,1500)]; }
+      if(m.id==='mem-0002'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500),pay(m.id,1,1500)]; }
+      if(m.id==='mem-0003'){ m.billingStart=ym(2); m.payments=[pay(m.id,2,1500)]; }
+    }); })();
   const ev={e1:['New York City',200],e2:['New York City',150],e3:['Dallas',100]};
   SEED.events.forEach(e=>{ if(ev[e.id]){ e.location=ev[e.id][0]; e.ticketPrice=ev[e.id][1]; } });
   const R=SEED.revenue; const drop=new Set(['rev-0001','rev-0002','rev-0004']);
@@ -3015,6 +3123,7 @@ function renderModal(){
   if(state.modal.type==='job'){ root.innerHTML = jobModalHTML(); return; }
   if(state.modal.type==='budget'){ root.innerHTML = budgetModalHTML(); return; }
   if(state.modal.type==='provider'){ root.innerHTML = providerModalHTML(); return; }
+  if(state.modal.type==='member'){ root.innerHTML = memberModalHTML(); return; }
   if(state.modal.type==='products'){
     const vendor = state.data.vendors.find(v=>v.id===state.modal.vendorId);
     if(!vendor){ root.innerHTML=''; return; }
@@ -3150,6 +3259,7 @@ function renderTable(entity){
               <td><div class="rowactions">
                 ${entity==='applications'?appRowActions(r):''}
                 ${entity==='requests'?reqRowActions(r):''}
+                ${entity==='members'?`<button class="iconbtn" data-action="open-member" data-id="${esc(r.id)}" title="Member profile: dues, activity">${ICON.members}</button>`:''}
                 ${entity==='vendors'?`<button class="iconbtn" data-action="open-products" data-id="${esc(r.id)}" title="Manage products">${ICON.box}</button>`:''}
                 ${entity==='locations'?`<button class="iconbtn" data-action="open-house-page" data-id="${esc(r.id)}" title="Open house overview: profit, events, budgets, vendors, staff, stock">${ICON.spaces}</button>`:''}
                 ${entity==='inventory'?`<button class="iconbtn" data-action="open-stock" data-id="${esc(r.id)}" title="Update stock">${ICON.box}</button>`:''}
@@ -3266,6 +3376,7 @@ document.addEventListener('click', (e)=>{
   if(dhHouseOverviewAction(action, el)) return;
   if(dhFinanceAction(action, el)) return;
   if(dhProviderDocsAction(action, el)) return;
+  if(dhMemberAction(action, el)) return;
   if(dhOpsAction(action, el)) return;
   if(action==='open-edit'){
     state.modal = {type:'edit', entity: el.dataset.entity, id: el.dataset.id || null};
