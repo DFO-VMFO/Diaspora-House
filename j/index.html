@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Diaspora House · Service request</title>
+<style>
+:root{--bg:#f6f2ea;--ink:#1a1a1a;--dim:#5b5b5b;--line:#ddd5c4;--gold:#8a6d2f;--card:#fffdf8;--good:#2f6f4a;--bad:#9b2f2f}
+@media (prefers-color-scheme:dark){:root{--bg:#141210;--ink:#f1ece0;--dim:#a8a291;--line:#34302a;--gold:#c9a45c;--card:#1c1915;--good:#6fbf8c;--bad:#e08080}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;max-width:460px;width:100%;padding:28px}
+.brand{letter-spacing:.22em;font-size:11px;text-transform:uppercase;color:var(--gold);margin:0 0 18px}
+h1{font-size:21px;line-height:1.3;margin:0 0 14px;font-weight:600}
+.row{display:flex;justify-content:space-between;gap:16px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}.row span:first-child{color:var(--dim)}.row span:last-child{text-align:right}
+.btns{display:flex;gap:10px;margin-top:22px}
+button{flex:1;font:inherit;font-size:15px;padding:13px;border-radius:6px;border:1px solid var(--ink);cursor:pointer}
+.yes{background:var(--ink);color:var(--bg)}.no{background:transparent;color:var(--ink)}button:disabled{opacity:.5;cursor:default}
+.note{font-size:12.5px;color:var(--dim);margin-top:16px;line-height:1.5}.msg{font-size:15px;line-height:1.55}.ok{color:var(--good)}.bad{color:var(--bad)}
+</style></head><body>
+<div class="card" id="app"><p class="brand">Diaspora House</p><p class="msg">Loading your request…</p></div>
+<script>
+const SB='https://eptsqnvenmllmzshigoi.supabase.co', KEY='sb_publishable_Nsp1ZPj_8ZVZs71bIhtP7g_MqJS1K0C';
+const t=new URLSearchParams(location.search).get('t')||'';
+const app=document.getElementById('app');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const when=iso=>{ if(!iso) return '—'; const d=new Date(iso); return isNaN(d)?esc(iso):d.toLocaleDateString([], {weekday:'short',month:'short',day:'numeric'})+' at '+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}); };
+const shell=h=>app.innerHTML='<p class="brand">Diaspora House</p>'+h;
+async function call(method, body){
+  const url=SB+'/functions/v1/job-response'+(method==='GET'?'?t='+encodeURIComponent(t):'');
+  const r=await fetch(url,{method, headers:{apikey:KEY,Authorization:'Bearer '+KEY,'Content-Type':'application/json'}, body: method==='GET'?undefined:JSON.stringify(body)});
+  return r.json();
+}
+function view(d){
+  const j=d.job||{};
+  if(d.state==='unknown') return shell('<h1>This link is not valid</h1><p class="msg">It may have been replaced by a newer one. Please contact the House team.</p>');
+  if(d.state==='closed') return shell('<h1>This request is closed</h1><p class="msg">The reply window has ended or the request was handled another way. Thank you for being ready.</p>');
+  if(d.state==='accepted') return shell('<h1 class="ok">You accepted this request</h1><p class="msg">'+esc(j.summary)+'<br>Needed '+when(j.neededBy)+'.</p><p class="note">The House team has been told and will be in touch with details.</p>');
+  if(d.state==='declined') return shell('<h1>You declined this request</h1><p class="msg">Thank you for letting us know. We will offer it to someone else.</p>');
+  shell('<h1>'+esc(j.summary)+'</h1>'+
+    '<div class="row"><span>Needed</span><span>'+when(j.neededBy)+'</span></div>'+
+    (j.location&&j.location!=='—'?'<div class="row"><span>Where</span><span>'+esc(j.location)+'</span></div>':'')+
+    '<div class="row"><span>For</span><span>'+esc(j.member)+'</span></div>'+
+    '<div class="row"><span>Pays</span><span>$'+Math.round(Number(j.pay)||0).toLocaleString()+'</span></div>'+
+    (j.details?'<p class="note">'+esc(j.details)+'</p>':'')+
+    '<div class="btns"><button class="yes" id="yes">Accept</button><button class="no" id="no">Decline</button></div>'+
+    '<p class="note">Your answer goes straight to the House team. If you do not reply in time, the request moves to another partner.</p>');
+  const go=async a=>{ document.getElementById('yes').disabled=true; document.getElementById('no').disabled=true;
+    try{ view(await call('POST',{t,action:a})); }catch(e){ shell('<p class="msg bad">Something went wrong. Please try again.</p>'); } };
+  document.getElementById('yes').onclick=()=>go('accept'); document.getElementById('no').onclick=()=>go('decline');
+}
+if(!t) shell('<h1>This link is not valid</h1><p class="msg">Please use the link from your email.</p>');
+else call('GET').then(view).catch(()=>shell('<p class="msg bad">Could not load the request. Please try again in a moment.</p>'));
+</script></body></html>

@@ -151,3 +151,15 @@ create table if not exists public.signin_attempts (id bigserial primary key, ema
 alter table public.signin_attempts enable row level security;
 revoke all on public.signin_attempts from anon, authenticated;
 create index if not exists signin_attempts_email_at on public.signin_attempts(email, at desc);
+
+-- Providers (build #3): reminder log, private document bucket (CEO only), daily reminder job
+create table if not exists public.doc_reminders_sent (doc_id text primary key, bucket int not null, at timestamptz not null default now());
+alter table public.doc_reminders_sent enable row level security;
+revoke all on public.doc_reminders_sent from anon, authenticated;
+insert into storage.buckets (id, name, public, file_size_limit) values ('provider-docs','provider-docs', false, 15728640) on conflict (id) do nothing;
+create policy "provider_docs_ceo_select" on storage.objects for select to authenticated using (bucket_id='provider-docs' and (select private.current_staff_role())='ceo');
+create policy "provider_docs_ceo_insert" on storage.objects for insert to authenticated with check (bucket_id='provider-docs' and (select private.current_staff_role())='ceo');
+create policy "provider_docs_ceo_update" on storage.objects for update to authenticated using (bucket_id='provider-docs' and (select private.current_staff_role())='ceo');
+create policy "provider_docs_ceo_delete" on storage.objects for delete to authenticated using (bucket_id='provider-docs' and (select private.current_staff_role())='ceo');
+-- app_secrets rows 'resend_api_key' and 'cron_key' are set directly in the database, never committed.
+-- select cron.schedule('provider-doc-expiry-daily','0 14 * * *', $$select net.http_post(url:='https://eptsqnvenmllmzshigoi.supabase.co/functions/v1/expiry-reminders', headers:=jsonb_build_object('Content-Type','application/json','x-cron-key',(select value from public.app_secrets where name='cron_key')), body:='{}'::jsonb)$$);

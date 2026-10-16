@@ -237,7 +237,7 @@ td.num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-dim
 window.DH_CONFIG = window.DH_CONFIG || {supabaseUrl:'https://eptsqnvenmllmzshigoi.supabase.co', supabaseKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwdHNxbnZlbm1sbG16c2hpZ29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwMDM2NjIsImV4cCI6MjEwNzU3OTY2Mn0.OXqgEbP29xHd_PpCHPa57WGoqwi3Xi_jwWIvem0cT5o', requireLogin:true};
 const DH_DB = (function(){
   const LS = 'dh_sb', LSS = 'dh_session';
-  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments'];
+  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:job_responses'];
   const db = {status:'off', lastError:'', KEYS, profile:null, onAuthLost:null};
   let underlying = window.storage;
   const mem = {};
@@ -333,6 +333,42 @@ const DH_DB = (function(){
     if(!p){ db.signOutLocal(); return {ok:false, msg:'This account is not on the House team.'}; }
     return {ok:true, profile:p};
   };
+
+  /* edge functions and private document storage, always as the signed-in user */
+  async function freshToken(){
+    if(session && session.expires_at && session.expires_at < Math.floor(Date.now()/1000)+60){ try{ await db.refresh(); }catch(e){} }
+    return session ? session.access_token : null;
+  }
+  db.fn = async function(name, body){
+    const cfg = db.config(); if(!cfg) return {ok:false, status:0, data:{}};
+    const tok = await freshToken();
+    try{
+      const res = await fetch(cfg.url+'/functions/v1/'+name, {method:'POST', headers:{apikey:cfg.key, Authorization:'Bearer '+(tok||cfg.key), 'Content-Type':'application/json'}, body:JSON.stringify(body||{})});
+      let data = {}; try{ data = await res.json(); }catch(e){}
+      return {ok:res.ok, status:res.status, data};
+    }catch(e){ return {ok:false, status:0, data:{}}; }
+  };
+  db.uploadDoc = async function(path, file){
+    const cfg = db.config(); if(!cfg) return {ok:false, msg:'No database is set up.'};
+    const tok = await freshToken(); if(!tok) return {ok:false, msg:'Sign in first.'};
+    try{
+      const res = await fetch(cfg.url+'/storage/v1/object/provider-docs/'+path.split('/').map(encodeURIComponent).join('/'), {method:'POST', headers:{apikey:cfg.key, Authorization:'Bearer '+tok, 'Content-Type':file.type||'application/octet-stream', 'x-upsert':'false'}, body:file});
+      if(!res.ok){ let m=''; try{ m=(await res.json()).message||''; }catch(e){} return {ok:false, msg:m||('error '+res.status)}; }
+      return {ok:true};
+    }catch(e){ return {ok:false, msg:'network problem'}; }
+  };
+  db.docUrl = async function(path){
+    const cfg = db.config(); const tok = await freshToken(); if(!cfg||!tok) return null;
+    try{
+      const res = await fetch(cfg.url+'/storage/v1/object/sign/provider-docs/'+path.split('/').map(encodeURIComponent).join('/'), {method:'POST', headers:{apikey:cfg.key, Authorization:'Bearer '+tok, 'Content-Type':'application/json'}, body:JSON.stringify({expiresIn:300})});
+      if(!res.ok) return null; const j = await res.json(); return j.signedURL ? cfg.url+'/storage/v1'+j.signedURL : null;
+    }catch(e){ return null; }
+  };
+  db.removeDoc = async function(path){
+    const cfg = db.config(); const tok = await freshToken(); if(!cfg||!tok) return false;
+    try{ const res = await fetch(cfg.url+'/storage/v1/object/provider-docs/'+path.split('/').map(encodeURIComponent).join('/'), {method:'DELETE', headers:{apikey:cfg.key, Authorization:'Bearer '+tok}}); return res.ok; }catch(e){ return false; }
+  };
+
   /* passwordless sign-in: Supabase emails a one-time code to a team member */
   db.sendCode = async function(email){
     const cfg = db.config(); if(!cfg) return {ok:false, msg:'No database is set up.'};
@@ -341,12 +377,12 @@ const DH_DB = (function(){
     catch(e){ return {ok:false, msg:'Could not reach the sign-in service.'}; }
     if(res.status===429) return {ok:false, msg:'Too many codes requested. Wait ten minutes and try again.'};
     if(!res.ok) return {ok:false, msg:'Could not send the code. Try again in a moment.'};
-    return {ok:true, msg:'If that email is on the House team, a 6-digit code is on its way.'};
+    return {ok:true, msg:'If that email is on the House team, a sign-in code is on its way.'};
   };
   db.verifyCode = async function(email, code){
     const cfg = db.config(); if(!cfg) return {ok:false, msg:'No database is set up.'};
     const em = String(email||'').trim().toLowerCase(), tok = String(code||'').replace(/\D/g,'');
-    if(tok.length<6) return {ok:false, msg:'Enter the 6-digit code from the email.'};
+    if(tok.length<6) return {ok:false, msg:'Enter the code from the email.'};
     let res; try{ res = await fetchT(cfg.url+'/auth/v1/verify', {method:'POST', headers:{apikey:cfg.key, 'Content-Type':'application/json'}, body:JSON.stringify({type:'email', email:em, token:tok})}); }
     catch(e){ return {ok:false, msg:'Could not reach the sign-in service.'}; }
     if(!res.ok) return {ok:false, msg:'That code is wrong or has expired. Ask for a new one.'};
@@ -402,7 +438,7 @@ function loginHTML(appName){
       <div class="modal">
         <div class="modal-head"><div><h3>${esc(appName)}</h3><div class="sub">Sign in with your House email. No password needed.</div></div></div>
         <div class="field"><label>Work email</label><input type="email" id="login-email" autocomplete="username" placeholder="you@yourcompany.com"></div>
-        <div class="field" id="login-code-wrap" style="display:none;"><label>6-digit code from your email</label><input type="text" id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456"></div>
+        <div class="field" id="login-code-wrap" style="display:none;"><label>Sign-in code from your email</label><input type="text" id="login-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="Code from the email"></div>
         <div id="login-msg" class="mono" style="font-size:11.5px;min-height:18px;margin:4px 0 12px;color:var(--text-faint);"></div>
         <button class="btn btn-primary btn-block" id="login-btn" data-action="db-sendcode">Email me a code</button>
         <p class="mono" style="font-size:10.5px;color:var(--text-faint, #888);margin-top:12px;">What you can see and change depends on your role. Ask the House Director for access.</p>
@@ -1031,8 +1067,40 @@ function dispatchJob(j, p){
   j.providerId = p.id; j.providerName = p.name; j.status = 'offered';
   j.offeredAt = new Date().toISOString();
   j.responseDueAt = new Date(Date.now()+hrs*3600000).toISOString();
-  j.token = j.token || Math.random().toString(36).slice(2,10);
-  jobLog(j, `Offer sent to ${p.name} by ${p.notifyVia||'SMS'} — reply within ${hrs}h`);
+  j.token = Math.random().toString(36).slice(2,10)+Math.random().toString(36).slice(2,6);
+  jobLog(j, `Offer to ${p.name} — reply within ${hrs}h`);
+  deliverOffer(j, p);
+}
+function offerLink(j){ try{ const u = new URL('../j/', location.href); return u.protocol==='https:' ? u.href+'?t='+j.token : ''; }catch(e){ return ''; } }
+function offerMessage(j, p){
+  const text = `New request from Diaspora House: ${j.summary}.\nFor ${memberShort(j.member)}. Needed ${fmtWhen(j.neededBy)}${j.location&&j.location!=='—'?' · '+j.location:''}.\nPays ${money(j.cost)}. Please reply within ${p.responseHours||4} hours.`;
+  return {text, link: offerLink(j)};
+}
+async function deliverOffer(j, p){
+  let note;
+  const via = p.notifyVia||'SMS';
+  if(!db.active() || !db.session()){ note = 'not sent (sign in with the database connected to send email)'; }
+  else if(!p.email){ note = via==='Email' ? 'not sent: no email on file' : `not sent: ${via} is not set up yet and there is no email on file`; }
+  else {
+    const m = offerMessage(j, p);
+    const r = await db.fn('send-offer', {to:p.email, subject:'New request: '+j.summary, text:m.text, link:m.link});
+    note = r.data && r.data.delivered ? (via==='Email' ? 'emailed' : `emailed (${via} is not set up yet)`) : (r.data && r.data.reason==='no_real_email' ? 'not sent: that is a sample email address' : 'email failed, try Resend');
+  }
+  jobLog(j, `Delivery to ${p.name}: ${note}`); touch(j); await persist('jobs');
+  if(!state.modal || state.modal.type==='job') render();
+}
+async function applyJobResponses(){
+  if(!db.active() || !canWrite('jobs')) return;
+  const offered=(state.data.jobs||[]).filter(j=>j.status==='offered' && j.token); if(!offered.length) return;
+  const resp = await storageGet('ops:job_responses'); if(!resp || typeof resp!=='object') return;
+  let n=0;
+  offered.forEach(j=>{
+    const r=resp[j.token]; if(!r || String(r.at)<=String(j.offeredAt||'')) return;
+    if(r.action==='accept'){ j.status='accepted'; j.respondedAt=r.at; jobLog(j, `${j.providerName} accepted from their link`); }
+    else { escalateJob(j, `${j.providerName} declined from their link`); }
+    touch(j); n++;
+  });
+  if(n){ await persist('jobs'); logActivity('updated','jobs',`${n} provider repl${n>1?'ies':'y'} received`); toast(`${n} provider repl${n>1?'ies':'y'} received.`); if(!state.modal || state.modal.type==='job') render(); }
 }
 function escalateJob(j, reason){
   const cur = provById(j.providerId);
@@ -1095,8 +1163,9 @@ SCHEMAS.providers = {
     {header:'Contact', render:p=>`${esc(p.contact||'—')}<div class="rowsub">${esc(p.phone||p.email||'')} · ${esc(p.notifyVia||'SMS')}</div>`},
     {header:'Notice / reply', sortKey:'minLeadHours', render:p=>`${p.minLeadHours||0}h notice<div class="rowsub">reply in ${p.responseHours||0}h</div>`, num:true},
     {header:'Jobs', render:p=>{ const js=(state.data.jobs||[]).filter(j=>j.providerId===p.id); const open=js.filter(j=>['offered','accepted','in progress'].includes(j.status)).length; const done=js.filter(j=>j.status==='completed').length; return `${open} open<div class="rowsub">${done} completed</div>`; }, num:true},
+    {header:'Score', render:p=>scoreCell(p), num:true},
     {header:'Rating', sortKey:'quality', render:p=>p.quality?'★ '+Number(p.quality).toFixed(1):'—', num:true},
-    {header:'Paperwork', render:p=>{ const n=[p.w9,p.insurance,p.agreement].filter(Boolean).length; return `<span style="color:${n===3?'var(--good)':'var(--warn)'};">${n}/3</span><div class="rowsub">W-9 · insurance · agreement</div>`; }},
+    {header:'Paperwork', render:p=>{ const n=[p.w9,p.insurance,p.agreement].filter(Boolean).length; const bad=providerDocIssues(p).length; return `<span style="color:${n===3&&!bad?'var(--good)':'var(--warn)'};">${n}/3</span><div class="rowsub">${bad?bad+' document'+(bad>1?'s':'')+' expiring':'W-9 · insurance · agreement'}</div>`; }},
     {header:'Status', sortKey:'status', render:p=>badge('providers', p.id, ({active:'active',onboarding:'applied',paused:'pending'})[p.status]||'active', p.status||'active')},
   ],
   searchFields:['name','category','contact','specialty','city'],
@@ -1167,14 +1236,14 @@ function jobModalHTML(){
       <button class="btn btn-ghost btn-sm" data-action="job-cancel" data-id="${esc(j.id)}">Cancel job</button></div>`
       : `<p style="font-size:12.5px;color:var(--text-faint);">No active providers yet. Add one under Providers.</p>`;
   } else if(j.status==='offered' && p){
-    const msg = `Diaspora House: new request — ${j.summary}. For ${memberShort(j.member)}. Needed ${fmtWhen(j.neededBy)}${j.location&&j.location!=='—'?' · '+j.location:''}. Please reply within ${p.responseHours||4}h: https://partners.diaspora.house/j/${j.token}`;
+    const om = offerMessage(j, p); const msg = om.text + (om.link ? '\n'+om.link : '');
     action = `
       <div style="border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px;">
-        <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-bottom:6px;">${esc(p.notifyVia||'SMS')} to ${esc(p.contact||p.name)} · ${esc(p.phone||p.email||'')} — preview</div>
-        <div style="font-size:12.8px;line-height:1.5;">${esc(msg)}</div>
+        <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-bottom:6px;">Emailed to ${esc(p.contact||p.name)} · ${esc(p.email||'no email on file')}</div>
+        <div style="font-size:12.8px;line-height:1.5;white-space:pre-line;">${esc(msg)}</div>
       </div>
       <div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-bottom:12px;">
-        <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-bottom:8px;">What the provider sees on that link (no login)</div>
+        <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-bottom:8px;">What the provider sees on that link (no login). Their reply lands here within a minute.</div>
         <div style="font-size:13px;margin-bottom:4px;"><b>${esc(j.summary)}</b></div>
         <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">${fmtWhen(j.neededBy)} · ${esc(memberShort(j.member))} · pays you ${money(j.cost)}</div>
         <div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" data-action="job-accept" data-id="${esc(j.id)}">Accept</button><button class="btn btn-ghost btn-sm" data-action="job-decline" data-id="${esc(j.id)}">Decline</button></div>
@@ -1207,7 +1276,7 @@ function jobModalHTML(){
         </div>
         ${lead&&['new','offered'].includes(j.status)?`<div class="alert-row warn" style="margin-bottom:12px;cursor:default;">${ICON.alert}<span>${esc(lead)}</span></div>`:''}
         ${action}
-        <p class="mono" style="font-size:10.5px;color:var(--text-faint);margin:12px 0 4px;">Delivery is simulated for now: no text or email is actually sent yet.</p>
+        <p class="mono" style="font-size:10.5px;color:var(--text-faint);margin:12px 0 4px;">Offers go out by email with a private reply link. Text and WhatsApp need a Twilio account, which is not connected yet, so those providers get email in the meantime.</p>
         <div class="modal-head" style="margin:14px 0 6px;"><h3 style="font-size:13px;">Timeline</h3></div>
         ${(j.history||[]).slice().reverse().map(h=>`<div class="activity-row"><span class="who">${esc(h.by)}</span><span>${esc(h.text)}</span><span class="when">${timeAgo(h.at)}</span></div>`).join('')||'<div class="empty">No activity yet.</div>'}
         <div class="modal-foot"><button class="btn btn-ghost btn-sm" data-action="open-edit" data-entity="jobs" data-id="${esc(j.id)}">${ICON.edit}<span>Edit details</span></button><div></div></div>
@@ -1293,7 +1362,7 @@ function dhOpsAction(action, el){
     if(action==='job-accept'){ j.status='accepted'; j.respondedAt=new Date().toISOString(); jobLog(j, `${j.providerName} accepted`); jobSaved(j); return true; }
     if(action==='job-decline'){ escalateJob(j, `${j.providerName} declined`); jobSaved(j); return true; }
     if(action==='job-escalate'){ escalateJob(j, `${j.providerName} did not reply`); jobSaved(j); return true; }
-    if(action==='job-resend'){ if(p){ j.responseDueAt = new Date(Date.now()+(p.responseHours||4)*3600000).toISOString(); jobLog(j, `Offer re-sent to ${p.name}`); jobSaved(j,'re-sent'); } return true; }
+    if(action==='job-resend'){ if(p){ j.responseDueAt = new Date(Date.now()+(p.responseHours||4)*3600000).toISOString(); jobLog(j, `Offer re-sent to ${p.name}`); jobSaved(j,'re-sent'); deliverOffer(j,p); } return true; }
     if(action==='job-start'){ j.status='in progress'; jobLog(j, 'Work started'); jobSaved(j); return true; }
     if(action==='job-complete'){
       const f = document.getElementById('job-final-cost'); if(f && f.value!=='') j.cost = Number(f.value)||0;
@@ -1337,6 +1406,10 @@ computeInsights = function(){
     else if(j.status==='offered' && j.responseDueAt && new Date(j.responseDueAt).getTime()-Date.now() < 30*60000) a.push({level:'warn', text:`Waiting on ${j.providerName} to reply: ${j.summary}`, view:'jobs'});
     else if(['new','offered'].includes(j.status) && p && leadWarning(j,p)) a.push({level:'warn', text:`Short notice for ${p.name}: ${j.summary}`, view:'jobs'});
   });
+  (state.data.providers||[]).forEach(p=>{
+    (p.docs||[]).forEach(d=>{ const n=docDays(d); if(n===null||n>30) return;
+      a.push({level:n<0?'bad':'warn', text:`${p.name}: ${d.type} ${n<0?'expired '+(-n)+' day'+(n===-1?'':'s')+' ago':n===0?'expires today':'expires in '+n+' day'+(n===1?'':'s')}`, view:'providers'}); });
+  });
   (state.data.budgets||[]).forEach(b=>{
     if(b.status==='closed') return; const s = budgetSpend(b); if(!s.cap) return; const pct = s.spent/s.cap;
     if(pct>1) a.unshift({level:'bad', text:`${b.name} is over budget (${money(s.spent)} of ${money(s.cap)})`, view:'budgets'});
@@ -1344,9 +1417,10 @@ computeInsights = function(){
   });
   return a;
 };
-setInterval(()=>{ if(state.loaded) jobSweep(); }, 20000);
-setTimeout(()=>{ if(state.loaded) jobSweep(); }, 4000);
-setTimeout(()=>{ if(state.loaded) jobSweep(); }, 10000);
+async function jobSweepAll(){ try{ await applyJobResponses(); }catch(e){} jobSweep(); }
+setInterval(()=>{ if(state.loaded) jobSweepAll(); }, 20000);
+setTimeout(()=>{ if(state.loaded) jobSweepAll(); }, 4000);
+setTimeout(()=>{ if(state.loaded) jobSweepAll(); }, 10000);
 
 /* ---- sample data (Dallas) ---- */
 SEED.locations.push({id:'loc6', city:'Dallas', type:'Sister House', address:'Dallas, TX — Uptown (planned)', manager:'—', status:'opening soon'});
@@ -1857,6 +1931,78 @@ function insuranceState(p){
   if(p.insuranceExpires){ const d=(new Date(p.insuranceExpires+'T23:59:59').getTime()-Date.now())/86400000; if(d<0) return 'expired'; if(d<=30) return 'expiring'; }
   return 'valid';
 }
+
+/* ---- provider documents, expiry and scorecard ---- */
+const DOC_TYPES = ['W-9','Certificate of insurance','Partner agreement','License / credential','Other'];
+function docDays(d){ if(!d.expires) return null; return Math.round((new Date(d.expires+'T00:00:00').getTime()-new Date().setHours(0,0,0,0))/86400000); }
+function docState(d){ const n=docDays(d); if(n===null) return 'ok'; if(n<0) return 'expired'; if(n<=30) return 'expiring'; return 'ok'; }
+function docBadge(d){
+  const n=docDays(d), st=docState(d);
+  if(n===null) return '<span class="pill tag">no expiry</span>';
+  const col = st==='expired'?'var(--bad)':st==='expiring'?'var(--warn)':'var(--good)';
+  const txt = st==='expired' ? 'expired '+(-n)+'d ago' : n===0 ? 'expires today' : st==='expiring' ? 'expires in '+n+'d' : 'valid to '+esc(d.expires);
+  return `<span class="pill tag" style="color:${col};">${txt}</span>`;
+}
+function providerDocIssues(p){ return (p.docs||[]).filter(d=>docState(d)!=='ok'); }
+function syncDocFlags(p){
+  const has = t => (p.docs||[]).some(d=>d.type===t);
+  if(has('W-9')) p.w9 = true;
+  if(has('Partner agreement')) p.agreement = true;
+  const coi = (p.docs||[]).filter(d=>d.type==='Certificate of insurance');
+  if(coi.length){ p.insurance = true; const ex = coi.map(d=>d.expires).filter(Boolean).sort(); p.insuranceExpires = ex.length ? ex[ex.length-1] : ''; }
+}
+function docsSectionHTML(p){
+  const docs = p.docs||[], can = canWrite('providers');
+  const rows = docs.length ? docs.map(d=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px;">
+      <div style="min-width:0;"><div>${esc(d.type)} ${docBadge(d)}</div><div style="color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(d.name)} · added ${timeAgo(d.uploadedAt)}${d.by?' by '+esc(d.by):''}</div></div>
+      <div style="display:flex;gap:6px;flex-shrink:0;"><button class="btn btn-ghost btn-sm" data-action="doc-open" data-id="${esc(p.id)}" data-doc="${esc(d.id)}">View</button>${can?`<button class="btn btn-ghost btn-sm" data-action="doc-delete" data-id="${esc(p.id)}" data-doc="${esc(d.id)}">Remove</button>`:''}</div></div>`).join('') : '<div class="empty" style="padding:8px 0;">No documents uploaded yet.</div>';
+  const form = can ? `<div style="border:1px dashed var(--line);border-radius:8px;padding:12px;margin-top:10px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field" style="margin:0;"><label>Document type</label><select id="doc-type">${DOC_TYPES.map(t=>`<option>${esc(t)}</option>`).join('')}</select></div>
+        <div class="field" style="margin:0;"><label>Expires (optional)</label><input type="date" id="doc-expires"></div>
+      </div>
+      <div class="field" style="margin:10px 0;"><label>File (PDF or image, up to 15 MB)</label><input type="file" id="doc-file" accept=".pdf,.png,.jpg,.jpeg,.heic,.doc,.docx"></div>
+      <button class="btn btn-primary btn-sm" data-action="doc-upload" data-id="${esc(p.id)}">${ICON.check}<span>Upload document</span></button>
+      <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-top:8px;">Stored privately. You get an email digest, and the provider is emailed, at 30, 14, 7 and 3 days before a document expires, on the day, and once it has expired.</div></div>` : '';
+  return rows+form;
+}
+function providerScore(p){
+  const jobs=(state.data.jobs||[]).filter(j=>j.providerId===p.id||(j.tried||[]).includes(p.id));
+  const failed=jobs.filter(j=>(j.tried||[]).includes(p.id)).length;
+  const acc=jobs.filter(j=>j.providerId===p.id && ['accepted','in progress','completed'].includes(j.status));
+  const offers=acc.length+failed;
+  const acceptRate = offers ? acc.length/offers : null;
+  const mins=acc.filter(j=>j.respondedAt&&j.offeredAt).map(j=>(new Date(j.respondedAt)-new Date(j.offeredAt))/60000).filter(x=>x>=0);
+  const avgMins = mins.length ? mins.reduce((a,b)=>a+b,0)/mins.length : null;
+  const done=acc.filter(j=>j.status==='completed');
+  const timed=done.filter(j=>j.neededBy&&j.completedAt);
+  const onTimeRate = timed.length ? timed.filter(j=>new Date(j.completedAt)<=new Date(j.neededBy)).length/timed.length : null;
+  const replyWindow=(p.responseHours||4)*60;
+  const speed = avgMins===null ? null : Math.max(0, Math.min(1, 1-avgMins/replyWindow));
+  const quality = p.quality ? Number(p.quality)/5 : null;
+  const parts=[[acceptRate,.35],[onTimeRate,.25],[speed,.2],[quality,.2]].filter(x=>x[0]!==null);
+  const wsum=parts.reduce((a,x)=>a+x[1],0);
+  const score = parts.length ? Math.round(100*parts.reduce((a,x)=>a+x[0]*x[1],0)/wsum) : null;
+  const enough = offers>=3 || done.length>=2;
+  const label = score===null||!enough ? 'New' : score>=85 ? 'Excellent' : score>=70 ? 'Good' : score>=50 ? 'Watch' : 'At risk';
+  const color = label==='Excellent'||label==='Good' ? 'var(--good)' : label==='New' ? 'var(--text-faint)' : label==='Watch' ? 'var(--warn)' : 'var(--bad)';
+  return {offers, accepted:acc.length, failed, acceptRate, avgMins, done:done.length, onTimeRate, timedCount:timed.length, score, label, color, enough};
+}
+function pct(x){ return x===null ? '—' : Math.round(x*100)+'%'; }
+function scoreCell(p){ const s=providerScore(p); return s.score===null ? '<span style="color:var(--text-faint);">—</span>' : `<span style="color:${s.color};">${s.score}</span><div class="rowsub">${s.label}</div>`; }
+function scorecardHTML(p){
+  const s=providerScore(p);
+  const fact=(k,v)=>`<div style="display:flex;justify-content:space-between;gap:14px;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px;"><span style="color:var(--text-faint);">${k}</span><span style="text-align:right;">${v}</span></div>`;
+  const bar = s.score===null ? '' : `<div style="height:6px;background:var(--line);border-radius:4px;margin:6px 0 10px;"><div style="height:6px;width:${s.score}%;background:${s.color};border-radius:4px;"></div></div>`;
+  return `<div style="display:flex;align-items:baseline;gap:10px;"><span style="font-size:26px;color:${s.color};">${s.score===null?'—':s.score}</span><span style="font-size:12.5px;color:${s.color};">${s.label}${s.enough?'':' · not enough jobs yet to rate'}</span></div>${bar}
+    ${fact('Offers answered', s.offers+' ('+s.accepted+' accepted, '+s.failed+' declined or no reply)')}
+    ${fact('Acceptance rate', pct(s.acceptRate))}
+    ${fact('Average time to reply', s.avgMins===null?'—':fmtDur(s.avgMins*60000)+' (limit '+(p.responseHours||4)+'h)')}
+    ${fact('Finished on time', s.timedCount?pct(s.onTimeRate)+' of '+s.timedCount:'—')}
+    ${fact('Jobs completed', String(s.done))}
+    ${fact('House quality rating', p.quality?'★ '+Number(p.quality).toFixed(1):'—')}
+    <div class="mono" style="font-size:10.5px;color:var(--text-faint);margin-top:6px;">Score = acceptance 35%, on-time 25%, reply speed 20%, rating 20%. Built from real job history.</div>`;
+}
 function providerHistory(p){
   const jobs=(state.data.jobs||[]).filter(j=>j.providerId===p.id); const done=jobs.filter(j=>j.status==='completed');
   const uses=[]; (state.data.budgets||[]).forEach(b=>(b.expenses||[]).forEach(e=>{ if(e.vendorId===p.id || (!e.vendorId && e.vendor===p.name)) uses.push({b,e}); }));
@@ -1904,6 +2050,10 @@ function providerModalHTML(){
           ${row(!!p.w9,'W-9 on file')}${row(ins==='valid'||ins==='expiring','Insurance',insDetail)}${row(!!p.agreement,'Partner agreement signed')}
           ${row(!!p.credentials,'Licenses and credentials',esc(p.credentials||'none recorded'))}
         </div>
+        <div class="modal-head" style="margin-bottom:4px;"><h3 style="font-size:13px;">Documents</h3></div>
+        <div style="margin-bottom:14px;">${docsSectionHTML(p)}</div>
+        <div class="modal-head" style="margin-bottom:4px;"><h3 style="font-size:13px;">Performance scorecard</h3></div>
+        <div style="margin-bottom:14px;">${scorecardHTML(p)}</div>
         <div class="modal-head" style="margin-bottom:4px;"><h3 style="font-size:13px;">History with us</h3></div>
         <div style="margin-bottom:14px;">
           ${fact('Engagements', h.count?h.count+' ('+h.done.length+' jobs, '+h.uses.length+' budget expenses)':'None yet')}
@@ -1923,6 +2073,43 @@ function providerModalHTML(){
 
 /* ---- actions ---- */
 ['vendor-add-stub'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='providers'; });
+
+['doc-upload','doc-delete'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='providers'; });
+function dhProviderDocsAction(action, el){
+  if(!['doc-upload','doc-delete','doc-open'].includes(action)) return false;
+  const p = provById(el.dataset.id); if(!p) return true;
+  if(action==='doc-open'){
+    const d=(p.docs||[]).find(x=>x.id===el.dataset.doc); if(!d) return true;
+    const win = window.open('', '_blank');
+    db.docUrl(d.path).then(u=>{ if(u && win){ win.location = u; } else { if(win) win.close(); toast('Could not open that document.'); } });
+    return true;
+  }
+  if(!db.active()){ toast('Connect the database to store documents.'); return true; }
+  if(action==='doc-delete'){
+    const d=(p.docs||[]).find(x=>x.id===el.dataset.doc); if(!d) return true;
+    if(!window.confirm('Remove '+d.type+' ('+d.name+')? The file is deleted.')) return true;
+    db.removeDoc(d.path).then(ok=>{
+      if(!ok){ toast('Could not delete the file.'); return; }
+      p.docs = p.docs.filter(x=>x.id!==d.id);
+      if(!p.docs.some(x=>x.type===d.type)){ if(d.type==='W-9') p.w9=false; if(d.type==='Partner agreement') p.agreement=false; if(d.type==='Certificate of insurance'){ p.insurance=false; p.insuranceExpires=''; } }
+      else syncDocFlags(p);
+      touch(p); persist('providers'); logActivity('updated','providers',`${p.name}: ${d.type} removed`); render();
+    });
+    return true;
+  }
+  const f=document.getElementById('doc-file') && document.getElementById('doc-file').files[0];
+  if(!f){ toast('Choose a file first.'); return true; }
+  if(f.size>15*1024*1024){ toast('That file is over 15 MB.'); return true; }
+  const type=document.getElementById('doc-type').value, expires=document.getElementById('doc-expires').value||'';
+  const id=uid('doc'), safe=f.name.replace(/[^\w.\-]+/g,'_').slice(-80), path=p.id+'/'+id+'-'+safe;
+  toast('Uploading…');
+  db.uploadDoc(path, f).then(r=>{
+    if(!r.ok){ toast('Upload failed: '+r.msg); return; }
+    (p.docs=p.docs||[]).push({id, type, name:f.name, path, expires, uploadedAt:new Date().toISOString(), by:state.staffName||'Staff'});
+    syncDocFlags(p); touch(p); persist('providers'); logActivity('updated','providers',`${p.name}: ${type} uploaded`); toast('Document saved.'); render();
+  });
+  return true;
+}
 function dhFinanceAction(action, el){
   const id=el.dataset.id;
   if(action==='profit-period'){ state.profitPeriod=el.dataset.p; renderView(); return true; }
@@ -3078,6 +3265,7 @@ document.addEventListener('click', (e)=>{
   if(dhHouseAction(action, el)) return;
   if(dhHouseOverviewAction(action, el)) return;
   if(dhFinanceAction(action, el)) return;
+  if(dhProviderDocsAction(action, el)) return;
   if(dhOpsAction(action, el)) return;
   if(action==='open-edit'){
     state.modal = {type:'edit', entity: el.dataset.entity, id: el.dataset.id || null};
