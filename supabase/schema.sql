@@ -139,7 +139,11 @@ insert into public.role_access(role,key,can_write) values
 ('auditor','ops:souk_reservations',false),
 ('auditor','ops:souk_vendors',false),
 ('auditor','ops:spaces',false),
-('auditor','ops:talent_directory',false);
+('auditor','ops:talent_directory',false),
+('programming','ops:event_series',true),
+('concierge','ops:event_series',false),
+('membership','ops:event_series',false),
+('auditor','ops:event_series',false);
 
 -- Mock team (auth users are created separately; see users.sql)
 
