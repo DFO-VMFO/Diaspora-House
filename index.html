@@ -848,7 +848,7 @@ const PAST_EVENTS = [
    attended:false, met:0, note:"You were on the list but did not attend."},
 ];
 
-const EVENT_CATEGORIES = ["All","Following","Salons","Culinary","Business","Culture & Music","Screenings","Family & Elders","Heritage","Milestone Productions"];
+const EVENT_CATEGORIES = ["All","Following","Salons","Culinary","Business","Culture & Music","Screenings","Family & Elders","Heritage","Seasonal","Milestone Productions"];
 
 
 const NETWORK = [
@@ -1657,6 +1657,7 @@ function seriesLabel(s){
   if(s.cadence==='weekly') return 'Every '+(s.weekday||'week')+t;
   if(s.cadence==='every 2 weeks') return 'Every other '+(s.weekday||'week')+t;
   if(s.cadence==='monthly') return (s.weekOfMonth==='last'?'Last':(s.weekOfMonth||'1st'))+' '+(s.weekday||'day')+' of the month'+t;
+  if(s.cadence==='annual' && !s.monthDay && s.yearMonth) return 'Every '+(s.weekOfMonth==='last'?'last':(s.weekOfMonth||'1st'))+' '+(s.weekday||'day')+' of '+s.yearMonth+t;
   if(s.cadence==='annual'){ const m = String(s.monthDay||'').split('-'); const d = new Date(2026,(parseInt(m[0],10)||1)-1,parseInt(m[1],10)||1); return 'Every '+d.toLocaleDateString('en-US',{month:'long', day:'numeric'})+t; }
   return t.slice(3);
 }
@@ -1710,7 +1711,7 @@ function downloadSeriesICS(id){
   const start = stamp(new Date(y,mo-1,da,hh,mm)), end = stamp(new Date(y,mo-1,da,hh+2,mm));
   const code = ['SU','MO','TU','WE','TH','FR','SA'][Math.max(0,SERIES_DAYS.indexOf(s.weekday))];
   const nth = {'1st':'1','2nd':'2','3rd':'3','4th':'4','last':'-1'}[s.weekOfMonth] || '1';
-  const rule = s.cadence==='weekly' ? `FREQ=WEEKLY;BYDAY=${code}` : s.cadence==='every 2 weeks' ? `FREQ=WEEKLY;INTERVAL=2;BYDAY=${code}` : s.cadence==='monthly' ? `FREQ=MONTHLY;BYDAY=${nth}${code}` : 'FREQ=YEARLY';
+  const rule = s.cadence==='weekly' ? `FREQ=WEEKLY;BYDAY=${code}` : s.cadence==='every 2 weeks' ? `FREQ=WEEKLY;INTERVAL=2;BYDAY=${code}` : s.cadence==='monthly' ? `FREQ=MONTHLY;BYDAY=${nth}${code}` : (!s.monthDay && s.yearMonth) ? `FREQ=YEARLY;BYMONTH=${['January','February','March','April','May','June','July','August','September','October','November','December'].indexOf(s.yearMonth)+1};BYDAY=${nth}${code}` : 'FREQ=YEARLY';
   const until = s.endDate ? `;UNTIL=${s.endDate.replace(/-/g,'')}T235959` : '';
   const esc2 = t => String(t||'').replace(/[\\,;]/g, c=>'\\'+c).replace(/\n/g,'\\n');
   const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Diaspora House//Club Brain//EN','BEGIN:VEVENT',
