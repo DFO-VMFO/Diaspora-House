@@ -45,3 +45,13 @@ Push to `main`; the workflow publishes to GitHub Pages (Settings, Pages, Source:
 
 ## Member app: each house's own spaces
 The Spaces screen reads `ops:spaces` and `ops:locations` from the shared store. Members pick a house (their own is marked) and see only that house's rooms; rooms staff put in maintenance show as closed, and houses marked "opening soon" say so. Edit spaces in the Ops Console and they appear in the member app within about 20 seconds.
+
+## Programming Series: the recurring cultural calendar (build #6)
+- **What it is:** a series is a rule, such as "every Wednesday 7 PM", "first Thursday of the month", "every other Saturday" or "every Oct 9". Staff manage them in the Ops Console under **Programming Series** (stored as `ops:event_series`).
+- **Generate upcoming events** turns each active series into real events for the next 8 weeks (or the series' own horizon; heritage dates look 26 weeks ahead). Ids are built from series, date and house, so generating again never duplicates. A series set to "All active houses" creates one event per active house.
+- **Starter calendar:** one click loads 19 series: In Conversation, The Ancestral Table, The Sommelier's Table, Griot Pit Live, Rooftop Sessions, Griot Cinema, Pitch & Pinot, Elders' Council Tea, The Genealogy Circle, and ten annual heritage moments (Black History Month, Ghana Independence, Africa Day, Juneteenth, Emancipation Day, Heritage Day South Africa, Nigeria, Uganda, Kenya, Kwanzaa). Edit, pause or delete any of them. Rooms, seats, hosts and times are placeholders to adjust per house.
+- **Rotating themes:** one theme per line; each occurrence is named "Series: theme" and the themes cycle by date.
+- **Skipping a night:** cancel that event. Do not delete it, because a deleted event is generated again. After changing a series, use the arrow on its row to push the new time, room, seats and description to its upcoming events (names and cancellations are kept).
+- **Member app:** Events shows **The House Rhythm** (weekly and monthly series with the next date), a **Follow** toggle (kept on the member's device) with a **Following** filter, new **Screenings** and **Heritage** filters, series info on each event, and **Add every one to my calendar** (a repeating calendar file).
+- **Database:** run `supabase/migrations/20261018_event_series.sql` to give the Programming role write access and other staff roles read access. The CEO does not need it.
+

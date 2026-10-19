@@ -454,7 +454,7 @@ textarea{resize:vertical;min-height:70px;}
 window.DH_CONFIG = window.DH_CONFIG || {_supabaseUrl:'https://eptsqnvenmllmzshigoi.supabase.co', _supabaseKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwdHNxbnZlbm1sbG16c2hpZ29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwMDM2NjIsImV4cCI6MjEwNzU3OTY2Mn0.OXqgEbP29xHd_PpCHPa57WGoqwi3Xi_jwWIvem0cT5o', requireLogin:false};
 const DH_DB = (function(){
   const LS = 'dh_sb', LSS = 'dh_session';
-  const KEYS = ['ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments'];
+  const KEYS = ['ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:event_series'];
   const db = {status:'off', lastError:'', KEYS, profile:null, onAuthLost:null};
   let underlying = window.storage;
   const mem = {};
@@ -848,7 +848,7 @@ const PAST_EVENTS = [
    attended:false, met:0, note:"You were on the list but did not attend."},
 ];
 
-const EVENT_CATEGORIES = ["All","Salons","Culinary","Business","Culture & Music","Family & Elders","Milestone Productions"];
+const EVENT_CATEGORIES = ["All","Following","Salons","Culinary","Business","Culture & Music","Screenings","Family & Elders","Heritage","Milestone Productions"];
 
 
 const NETWORK = [
@@ -1120,6 +1120,8 @@ const state = {
   rsvpGuests: {e1:1, e4:0},   // eventId -> guest count taken from Guest Pass balance
   eventFilter: 'All',
   eventTab: 'upcoming',       // 'upcoming' | 'past'
+  series: [],                 // recurring programming, published by staff (ops:event_series)
+  follow: loadFollow(),       // series ids this member follows (kept on this device)
   chat: [
     {role:'ai', text:"Good evening, Amara. I'm the Club Brain — here for bookings, introductions, travel, or just to talk through what's on your mind. How can I help tonight?"}
   ],
@@ -1433,7 +1435,7 @@ function eventRow(e){
     <div class="event-date"><div class="d">${day}</div><div class="m">${month}</div></div>
     <div class="event-info">
       <h3>${esc(e.name)}</h3>
-      <div class="meta">${esc(e.time)} · ${esc(e.room)} · ${esc(e.category)}${countdown?` · ${countdown}`:''}</div>
+      <div class="meta">${esc(e.time)} · ${esc(e.room)} · ${esc(e.category)}${e.seriesName?` · ↻ ${esc(e.seriesName)}`:''}${countdown?` · ${countdown}`:''}</div>
     </div>
     <div class="event-actions">
       <span class="${statusClass}">${statusLabel}</span>
@@ -1646,6 +1648,80 @@ function viewSpaces(){
   `;
 }
 
+/* ---------------- The House Rhythm: recurring series ---------------- */
+function loadFollow(){ try{ return new Set(JSON.parse(localStorage.getItem('dh_follow_series')||'[]')); }catch(e){ return new Set(); } }
+function saveFollow(){ try{ localStorage.setItem('dh_follow_series', JSON.stringify([...state.follow])); }catch(e){} }
+const SERIES_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+function seriesLabel(s){
+  const t = s.time ? ' · '+s.time : '';
+  if(s.cadence==='weekly') return 'Every '+(s.weekday||'week')+t;
+  if(s.cadence==='every 2 weeks') return 'Every other '+(s.weekday||'week')+t;
+  if(s.cadence==='monthly') return (s.weekOfMonth==='last'?'Last':(s.weekOfMonth||'1st'))+' '+(s.weekday||'day')+' of the month'+t;
+  if(s.cadence==='annual'){ const m = String(s.monthDay||'').split('-'); const d = new Date(2026,(parseInt(m[0],10)||1)-1,parseInt(m[1],10)||1); return 'Every '+d.toLocaleDateString('en-US',{month:'long', day:'numeric'})+t; }
+  return t.slice(3);
+}
+function seriesNextEvent(s){ return upcomingEvents().filter(e=>e.seriesId===s.id).sort((a,b)=>a.date.localeCompare(b.date))[0] || null; }
+function viewRhythm(){
+  const list = (state.series||[]).filter(s=>s.status!=='paused' && s.cadence!=='annual')
+    .sort((a,b)=> (SERIES_DAYS.indexOf(a.weekday)+6)%7 - (SERIES_DAYS.indexOf(b.weekday)+6)%7);
+  if(!list.length) return '';
+  return `
+  <div class="section">
+    <div class="section-head"><h2>The House Rhythm</h2></div>
+    <p class="muted" style="max-width:640px;margin-bottom:16px;">The standing nights that make the House feel alive: conversations, cuisine, screenings, live music. Follow the ones you do not want to miss.</p>
+    <div class="grid" style="gap:12px;">
+      ${list.map(s=>{
+        const n = seriesNextEvent(s), f = state.follow.has(s.id), d = n ? fmtDate(n.date) : null;
+        return `
+        <div class="event-row" ${n?`data-action="open-event" data-id="${esc(n.id)}" style="cursor:pointer;"`:'style="cursor:default;"'}>
+          <div class="event-date">${d?`<div class="d">${d.day}</div><div class="m">${d.month}</div>`:`<div class="d">·</div><div class="m">soon</div>`}</div>
+          <div class="event-info">
+            <h3>${esc(s.name)}</h3>
+            <div class="meta">${esc(seriesLabel(s))} · ${esc(s.room||'')}${s.format?` · ${esc(s.format)}`:''}${n&&n.name!==s.name?`<br>Next: ${esc(n.name.replace(s.name+': ',''))}`:''}</div>
+          </div>
+          <div class="event-actions"><span class="pill ${f?'on':'tag'}" data-action="follow-series" data-id="${esc(s.id)}" style="cursor:pointer;">${f?'Following ✓':'Follow'}</span></div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+function seriesBlock(e){
+  const s = (state.series||[]).find(x=>x.id===e.seriesId); if(!s) return '';
+  const f = state.follow.has(s.id);
+  return `
+  <div class="field">
+    <label>Part of a series</label>
+    <p style="font-size:13px;color:var(--ink-dim);margin:0 0 10px;">${esc(s.name)} · ${esc(seriesLabel(s))}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn ${f?'btn-primary':'btn-ghost'} btn-sm" data-action="follow-series" data-id="${esc(s.id)}">${f?'Following ✓':'Follow this series'}</button>
+      <button class="btn btn-ghost btn-sm" data-action="series-ics" data-id="${esc(s.id)}">Add every one to my calendar</button>
+    </div>
+  </div>`;
+}
+function downloadSeriesICS(id){
+  const s = (state.series||[]).find(x=>x.id===id); const n = s && seriesNextEvent(s);
+  if(!s || !n){ toast('No upcoming date for this series yet.'); return; }
+  const pad = v => String(v).padStart(2,'0');
+  const m = String(n.time||s.time||'').match(/(\d+):(\d+)\s*(AM|PM)/i);
+  let hh = m ? parseInt(m[1],10) : 19; const mm = m ? parseInt(m[2],10) : 0;
+  if(m){ const ap = m[3].toUpperCase(); if(ap==='PM' && hh!==12) hh += 12; if(ap==='AM' && hh===12) hh = 0; }
+  const [y,mo,da] = n.date.split('-').map(Number);
+  const stamp = dt => `${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+  const start = stamp(new Date(y,mo-1,da,hh,mm)), end = stamp(new Date(y,mo-1,da,hh+2,mm));
+  const code = ['SU','MO','TU','WE','TH','FR','SA'][Math.max(0,SERIES_DAYS.indexOf(s.weekday))];
+  const nth = {'1st':'1','2nd':'2','3rd':'3','4th':'4','last':'-1'}[s.weekOfMonth] || '1';
+  const rule = s.cadence==='weekly' ? `FREQ=WEEKLY;BYDAY=${code}` : s.cadence==='every 2 weeks' ? `FREQ=WEEKLY;INTERVAL=2;BYDAY=${code}` : s.cadence==='monthly' ? `FREQ=MONTHLY;BYDAY=${nth}${code}` : 'FREQ=YEARLY';
+  const until = s.endDate ? `;UNTIL=${s.endDate.replace(/-/g,'')}T235959` : '';
+  const esc2 = t => String(t||'').replace(/[\\,;]/g, c=>'\\'+c).replace(/\n/g,'\\n');
+  const ics = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Diaspora House//Club Brain//EN','BEGIN:VEVENT',
+    `UID:${s.id}@diasporahouse`, `DTSTAMP:${start}`, `DTSTART:${start}`, `DTEND:${end}`, `RRULE:${rule}${until}`,
+    `SUMMARY:${esc2(s.name)}`, `LOCATION:${esc2(s.room)}`, `DESCRIPTION:${esc2(s.desc)}`, 'END:VEVENT','END:VCALENDAR'].join('\r\n');
+  const url = URL.createObjectURL(new Blob([ics], {type:'text/calendar'}));
+  const a = document.createElement('a'); a.href = url; a.download = s.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,60)+'-series.ics';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url), 2000);
+  toast('Series calendar file downloaded.');
+}
+
 /* ---------------- View: Events ---------------- */
 function viewEvents(){
   if(state.eventTab === 'past'){
@@ -1671,7 +1747,7 @@ function viewEvents(){
   }
 
   const cats = EVENT_CATEGORIES;
-  const filtered = upcomingEvents().filter(e => state.eventFilter==='All' || e.category===state.eventFilter)
+  const filtered = upcomingEvents().filter(e => state.eventFilter==='All' || (state.eventFilter==='Following' ? (e.seriesId && state.follow.has(e.seriesId)) : e.category===state.eventFilter))
                                     .sort((a,b)=> a.date.localeCompare(b.date));
   const groups = { "This Week": [], "Next Week": [], "Later This Season": [] };
   filtered.forEach(e=>{
@@ -1683,6 +1759,7 @@ function viewEvents(){
 
   return `
   ${eventTabs()}
+  ${viewRhythm()}
   <div class="section">
     <p class="muted" style="max-width:640px;margin-bottom:16px;">A 365-day calendar of money-can't-buy experiences — curated, not blasted. RSVP holds your seat; the Empty Chair Rule keeps a share of every room open for last-minute guests.</p>
     <div class="tag-row" style="margin-bottom:22px;">
@@ -1694,7 +1771,7 @@ function viewEvents(){
         <div class="grid" style="gap:12px;">${list.map(e=>eventRow(e)).join('')}</div>
       </div>
     ` : '').join('')}
-    ${filtered.length===0 ? `<div class="empty"><h3>Nothing in this category right now</h3><p>Check back soon, or ask the Club Brain to suggest something.</p></div>` : ''}
+    ${filtered.length===0 ? `<div class="empty"><h3>${state.eventFilter==='Following'?'You are not following a series yet':'Nothing in this category right now'}</h3><p>${state.eventFilter==='Following'?'Follow a series in The House Rhythm above and its next nights will show here.':'Check back soon, or ask the Club Brain to suggest something.'}</p></div>` : ''}
   </div>
 
   <div class="section">
@@ -1921,7 +1998,7 @@ async function bookingClash(b){
 }
 async function hydrateShared(){
   if(!sharedAvailable()) return false;
-  const snap = () => JSON.stringify([EVENTS.map(e=>[e.id,e.name,e.date,e.time,e.room,e.capacity,e.held,e.cancelled]), state.otherSeats, [...state.rsvps], state.rsvpGuests, [...state.waitlist], state.bookings, state.otherBookings, SOUK_VENDORS.map(v=>v.products.map(p=>[p.id,p.stock,p.price])), ACADEMY_CLASSES.map(c=>[c.id,c.capacity,c.enrolled,c.day,c.time]), state.soukReservations, state.enrollments, state.children, state.otherReserved, state.otherEnrolled]);
+  const snap = () => JSON.stringify([EVENTS.map(e=>[e.id,e.name,e.date,e.time,e.room,e.capacity,e.held,e.cancelled]), state.otherSeats, [...state.rsvps], state.rsvpGuests, [...state.waitlist], state.bookings, state.otherBookings, SOUK_VENDORS.map(v=>v.products.map(p=>[p.id,p.stock,p.price])), ACADEMY_CLASSES.map(c=>[c.id,c.capacity,c.enrolled,c.day,c.time]), (state.series||[]).map(x=>[x.id,x.name,x.cadence,x.weekday,x.weekOfMonth,x.monthDay,x.time,x.room,x.status]), EVENTS.map(e=>[e.id,e.seriesId]), state.soukReservations, state.enrollments, state.children, state.otherReserved, state.otherEnrolled]);
   const before = snap();
   // events: staff can change capacity, held seats, dates, rooms; cancel; or add new ones
   const evs = await sget(EVENT_KEY);
@@ -1930,16 +2007,20 @@ async function hydrateShared(){
       let e = EVENTS.find(x=>x.id===r.id);
       if(!e){
         if(!r.name || !r.date) return;
-        e = {id:r.id, date:r.date, time:r.time||'', name:r.name, room:r.room||'', category:r.category||'Salons', curator:r.curator||'Hosted by the House', dress:r.dress||'', capacity:r.capacity||0, held:r.held||0, going:0, guestMax:1, tags:r.tags||[], desc:r.desc||'', attendees:[]};
+        e = {id:r.id, date:r.date, time:r.time||'', name:r.name, room:r.room||'', category:r.category||'Salons', curator:r.curator||'Hosted by the House', dress:r.dress||'', capacity:r.capacity||0, held:r.held||0, going:0, guestMax:1, tags:r.tags||[], desc:r.desc||'', attendees:[], seriesId:r.seriesId||'', seriesName:r.seriesName||''};
         EVENTS.push(e);
       } else {
         ['name','date','time','room','desc'].forEach(k=>{ if(r[k]) e[k]=r[k]; });
+        e.seriesId = r.seriesId||''; e.seriesName = r.seriesName||'';
         if(typeof r.capacity==='number') e.capacity = r.capacity;
         if(typeof r.held==='number') e.held = r.held;
       }
       e.cancelled = r.status==='cancelled';
     });
   }
+  // recurring series (the House rhythm)
+  const srs = await sget('ops:event_series');
+  if(Array.isArray(srs)) state.series = srs.filter(x=>x && x.id && x.name);
   // houses and each house's own spaces (managed by staff in the Ops Console)
   let spacesChanged = false;
   const lcs = await sget('ops:locations');
@@ -2806,6 +2887,7 @@ function renderModal(){
           </div>
           <p class="faint" style="font-size:12.5px;margin:2px 0 16px;">${esc(e.room)} · ${esc(e.curator)} · Dress: ${esc(e.dress)}</p>
           <p class="muted" style="font-size:13.5px;margin:0 0 18px;">${esc(e.desc)}</p>
+          ${seriesBlock(e)}
 
           <div class="field">
             <label>Capacity</label>
@@ -3081,6 +3163,12 @@ document.addEventListener('click', async (e)=>{
   if(action==='open-event'){ state.modal = {type:'event', id: el.dataset.id}; renderModal(); return; }
   if(action==='filter-cat'){ state.eventFilter = el.dataset.cat; renderView(); return; }
   if(action==='events-tab'){ state.eventTab = el.dataset.tab; renderView(); return; }
+  if(action==='follow-series'){
+    const id = el.dataset.id; if(state.follow.has(id)) state.follow.delete(id); else state.follow.add(id);
+    saveFollow(); toast(state.follow.has(id) ? 'Following. Use the Following filter to see just these nights.' : 'Unfollowed.');
+    renderView(); if(state.modal && state.modal.type==='event') renderModal(); return;
+  }
+  if(action==='series-ics'){ downloadSeriesICS(el.dataset.id); return; }
 
   if(action==='confirm-rsvp'){
     const id = el.dataset.id;

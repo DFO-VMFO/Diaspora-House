@@ -237,7 +237,7 @@ td.num{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-dim
 window.DH_CONFIG = window.DH_CONFIG || {supabaseUrl:'https://eptsqnvenmllmzshigoi.supabase.co', supabaseKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVwdHNxbnZlbm1sbG16c2hpZ29pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwMDM2NjIsImV4cCI6MjEwNzU3OTY2Mn0.OXqgEbP29xHd_PpCHPa57WGoqwi3Xi_jwWIvem0cT5o', requireLogin:true};
 const DH_DB = (function(){
   const LS = 'dh_sb', LSS = 'dh_session';
-  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:job_responses','ops:ticket_orders','ops:member_dues'];
+  const KEYS = ['ops:inventory','ops:roster','ops:shifts','ops:revenue','ops:providers','ops:jobs','ops:budgets','ops:members','ops:spaces','ops:events','ops:souk_vendors','ops:academy_classes','ops:talent_directory','ops:language_tables','ops:locations','ops:activity_log','ops:applications','ops:circles','ops:requests','ops:bookings','ops:rsvps','ops:souk_reservations','ops:enrollments','ops:job_responses','ops:ticket_orders','ops:member_dues','ops:event_series'];
   const db = {status:'off', lastError:'', KEYS, profile:null, onAuthLost:null};
   let underlying = window.storage;
   const mem = {};
@@ -3037,7 +3037,7 @@ function renderDashboard(){
     <div class="two-col">
       <div class="tablewrap">
         <div class="panel-head">Upcoming events</div>
-        ${d.events.slice(0,6).map(e=>`
+        ${d.events.filter(e=>e.status!=='cancelled' && String(e.date||'')>=localISO(new Date())).sort((a,b)=>String(a.date).localeCompare(String(b.date))||timeVal(a.time)-timeVal(b.time)).slice(0,6).map(e=>`
           <div class="alert-row" style="cursor:default;">
             <span style="flex:1;min-width:0;"><span style="color:var(--text);">${esc(e.name)}</span><br><span style="color:var(--text-faint);font-size:11px;">${esc(e.date||'—')} ${esc(e.time||'')} · ${esc(e.room||'—')}</span></span>
           </div>
@@ -3345,6 +3345,7 @@ function renderTable(entity){
                 ${entity==='budgets'?`<button class="iconbtn" data-action="open-budget" data-id="${esc(r.id)}" title="Line items and expenses">${ICON.box}</button>`:''}
                 ${entity==='events'&&r.onSale?`<button class="iconbtn" data-action="copy-ticket-link" data-id="${esc(r.id)}" title="Copy the public ticket link">${ICON.send}</button>`:''}
                 ${entity==='events'?`<button class="iconbtn" data-action="open-attendance" data-id="${esc(r.id)}" title="Attendance and check-in">${ICON.members}</button>`:''}
+                ${entity==='series'&&canWrite('series')?`<button class="iconbtn" data-action="series-refresh" data-id="${esc(r.id)}" title="Apply this series' time, room, seats and description to its upcoming events">${ICON.arrow}</button>`:''}
                 ${entity==='classes'?`<button class="iconbtn" data-action="open-roster" data-id="${esc(r.id)}" title="Class roster">${ICON.members}</button>`:''}
                 ${!canWrite(entity)?'':!['bookings','reservations'].includes(entity)?`<button class="iconbtn" data-action="duplicate-entity" data-entity="${entity}" data-id="${esc(r.id)}" title="Duplicate">${ICON.copy}</button>`:''}
                 ${canWrite(entity)?`<button class="iconbtn" data-action="open-edit" data-entity="${entity}" data-id="${esc(r.id)}" title="Edit">${ICON.edit}</button>
@@ -3457,6 +3458,7 @@ document.addEventListener('click', (e)=>{
   if(dhProviderDocsAction(action, el)) return;
   if(dhMemberAction(action, el)) return;
   if(dhTicketAction(action, el)) return;
+  if(dhSeriesAction(action, el)) return;
   if(dhOpsAction(action, el)) return;
   if(action==='open-edit'){
     state.modal = {type:'edit', entity: el.dataset.entity, id: el.dataset.id || null};
@@ -4006,6 +4008,198 @@ function dhReportAction(action, el){
   }
   return false;
 }
+
+/* ============ Programming Series: the recurring cultural calendar ============
+   A series is a rule ("every Wednesday 7 PM", "first Thursday of the month", "every Oct 9").
+   "Generate upcoming events" turns each active series into real events for the next few weeks.
+   Event ids are built from series + date (+ house), so generating twice never duplicates.
+   To skip one night, cancel that event instead of deleting it; a deleted event would come back. */
+const SRS_WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const SRS_NTH = ['1st','2nd','3rd','4th','last'];
+const SRS_FORMATS = ['Salons','Culinary','Business','Culture & Music','Family & Elders','Screenings','Heritage','Milestone Productions'];
+const SRS_CADENCES = ['weekly','every 2 weeks','monthly','annual'];
+const SRS_ALL = 'All active houses';
+
+STORAGE_KEYS.series = 'ops:event_series';
+ENTITY_ORDER.push('series');
+state.data.series = [];
+SEED.series = [];
+state.sort.events = {key:'date', dir:1};
+if(!ALL_VIEWS.includes('series')) ALL_VIEWS.push('series');
+ROLES.programming.views.push('series'); ROLES.programming.reads.push('series'); ROLES.programming.write.push('series');
+ROLES.concierge.reads.push('series'); ROLES.membership.reads.push('series');
+NAV.splice(NAV.findIndex(n=>n.id==='events')+1, 0, {id:'series', label:'Programming Series', icon:ICON.circles});
+VIEW_META.series = {title:'Programming Series', sub:'Recurring conversations, screenings, cuisine nights and heritage moments that fill the House calendar'};
+SCHEMAS.events.fields.find(f=>f.key==='category').options.push('Screenings','Heritage');
+SCHEMAS.events.columns[0].render = e=>`<div class="rowtitle">${esc(e.name)}</div><div class="rowsub">${esc(e.category||'—')} · ${esc(e.room||'—')}${e.seriesName?' · ↻ '+esc(e.seriesName):''}</div>`;
+['series-generate','series-starter','series-refresh'].forEach(a=>{ WRITE_ACTIONS.add(a); ACTION_ENTITY[a]='series'; });
+
+function srsCadenceLabel(s){
+  const t = s.time ? ' · '+s.time : '';
+  if(s.cadence==='weekly') return 'Every '+(s.weekday||'week')+t;
+  if(s.cadence==='every 2 weeks') return 'Every other '+(s.weekday||'week')+t;
+  if(s.cadence==='monthly') return (s.weekOfMonth==='last'?'Last':(s.weekOfMonth||'1st'))+' '+(s.weekday||'day')+' of the month'+t;
+  if(s.cadence==='annual'){
+    const m = String(s.monthDay||'').split('-'); const d = new Date(2026,(parseInt(m[0],10)||1)-1,parseInt(m[1],10)||1);
+    return 'Every '+d.toLocaleDateString([], {month:'long', day:'numeric'})+t;
+  }
+  return '';
+}
+/* The dates (YYYY-MM-DD) a series lands on between two dates, inclusive. */
+function srsDates(s, fromISO, toISO){
+  const out = []; const wd = SRS_WEEKDAYS.indexOf(s.weekday);
+  const from = new Date(fromISO+'T12:00:00'), to = new Date(toISO+'T12:00:00');
+  const lo = s.startDate ? new Date(s.startDate+'T12:00:00') : null, hi = s.endDate ? new Date(s.endDate+'T12:00:00') : null;
+  const anchor = new Date((s.startDate||'2026-01-04')+'T12:00:00');
+  for(let d = new Date(from); d <= to; d.setDate(d.getDate()+1)){
+    if((lo && d<lo) || (hi && d>hi)) continue;
+    const iso = localISO(d); let hit = false;
+    if(s.cadence==='annual') hit = !!s.monthDay && iso.slice(5)===s.monthDay;
+    else if(wd<0 || d.getDay()!==wd) hit = false;
+    else if(s.cadence==='weekly') hit = true;
+    else if(s.cadence==='every 2 weeks'){ const w = Math.floor(Math.round((d-anchor)/86400000)/7); hit = ((w%2)+2)%2===0; }
+    else if(s.cadence==='monthly'){
+      const last = new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+      hit = s.weekOfMonth==='last' ? d.getDate()+7>last : Math.ceil(d.getDate()/7)===(parseInt(s.weekOfMonth,10)||1);
+    }
+    if(hit) out.push(iso);
+  }
+  return out;
+}
+function srsHouses(s){
+  const active = (state.data.locations||[]).filter(l=>l.status==='active').map(l=>l.city);
+  if(s.location===SRS_ALL) return active.length ? active : [''];
+  return [s.location && s.location!=='—' ? s.location : ''];
+}
+function srsNext(s){
+  if(s.status==='paused') return null;
+  const to = new Date(); to.setDate(to.getDate()+400);
+  return srsDates(s, localISO(new Date()), localISO(to))[0] || null;
+}
+function srsEventFields(s){
+  return {time:s.time||'', room:s.room||'', category:s.format||'Salons', capacity:Number(s.capacity)||0, held:Number(s.held)||0, curator:s.curator||'', dress:s.dress||'', tags:(s.tags||[]).slice(), desc:s.desc||'', ticketPrice:Number(s.ticketPrice)||0};
+}
+function srsGenerate(){
+  const today = localISO(new Date()), evs = state.data.events, have = new Set(evs.map(e=>e.id)); let n = 0;
+  state.data.series.filter(s=>s.status!=='paused').forEach(s=>{
+    const to = new Date(); to.setDate(to.getDate()+(Number(s.horizonWeeks)||8)*7);
+    const themes = String(s.themes||'').split('\n').map(x=>x.trim()).filter(Boolean);
+    const base = s.startDate || '2026-01-01';
+    srsDates(s, today, localISO(to)).forEach(date=>{
+      const ord = srsDates(s, base, date).length-1;
+      const theme = themes.length ? themes[((ord%themes.length)+themes.length)%themes.length] : '';
+      srsHouses(s).forEach(city=>{
+        const id = 'ser-'+s.id+'-'+date+(city?'-'+city.toLowerCase().replace(/[^a-z0-9]+/g,''):'');
+        if(have.has(id)) return;
+        evs.push(touch(Object.assign({id, name: theme ? `${s.name}: ${theme}` : s.name, date, status:'scheduled', location:city, onSale:false, seriesId:s.id, seriesName:s.name, createdAt:new Date().toISOString()}, srsEventFields(s))));
+        have.add(id); n++;
+      });
+    });
+  });
+  if(n){ persist('events'); logActivity('added','events',`${n} recurring event${n===1?'':'s'} from Programming Series`); }
+  return n;
+}
+function srsStarterList(){
+  const main = ((state.data.locations||[]).find(l=>l.status==='active')||{}).city || '—';
+  const B = {status:'active', location:main, horizonWeeks:8, ticketPrice:0, weekday:'Sunday', weekOfMonth:'1st'};
+  const S = (slug, o) => Object.assign({}, B, {id:'srs-'+slug}, o);
+  const H = (slug, name, md, desc) => S(slug, {name, format:'Heritage', cadence:'annual', monthDay:md, time:'6:30 PM', room:'The Great Room', capacity:60, held:6, curator:'Hosted by the House Historian', dress:'Smart casual', tags:['Heritage','Open to guests'], desc, horizonWeeks:26});
+  return [
+    S('in-conversation', {name:'In Conversation', format:'Salons', cadence:'monthly', weekday:'Thursday', weekOfMonth:'1st', time:'7:00 PM', room:'The Great Room', capacity:40, held:4, curator:'Membership Committee', dress:'Evening tailored', tags:['Off the record','Q&A'], desc:'A fireside conversation with a founder, artist, scholar or statesperson from across the Diaspora. Off the record, no recordings, questions welcome.', themes:'Founders and finance\nArts and letters\nPolicy and diplomacy\nScience and health'}),
+    S('ancestral-table', {name:'The Ancestral Table', format:'Culinary', cadence:'weekly', weekday:'Wednesday', time:'7:00 PM', room:'The Ancestral Kitchen', capacity:10, held:1, curator:'Rotating guest chef', dress:'Smart casual', tags:['Seated','10 seats'], desc:"A guest chef cooks one country's menu around a single shared table, with the story behind every dish.", themes:'Ethiopia and Eritrea\nNigeria\nGhana\nSenegal\nSouth Africa\nKenya\nUganda\nThe Caribbean'}),
+    S('sommeliers-table', {name:"The Sommelier's Table", format:'Culinary', cadence:'monthly', weekday:'Tuesday', weekOfMonth:'3rd', time:'6:30 PM', room:'Spirits Vault', capacity:12, held:1, curator:'Spice Sommelier', dress:'Smart casual', tags:['Seated tasting','12 seats'], desc:'A seated tasting through one region, paired with small bites built around its flavor memory.', themes:'Ethiopian Tej\nSouth African reds\nWest African spirits\nNorth African wines\nEast African craft spirits'}),
+    S('griot-pit-live', {name:'Griot Pit Live', format:'Culture & Music', cadence:'weekly', weekday:'Friday', time:'8:00 PM', room:'The Griot Pit', capacity:24, held:2, curator:'House Griot', dress:'Smart casual', tags:['Live set','No stage'], desc:'Storytellers, poets and live musicians in a sunken circle with no stage and no hierarchy.', themes:'Storytelling night\nPoetry and spoken word\nAcoustic set\nOpen mic from members'}),
+    S('rooftop-sessions', {name:'Rooftop Sessions', format:'Culture & Music', cadence:'every 2 weeks', weekday:'Saturday', time:'6:00 PM', room:'Rooftop', capacity:80, held:8, curator:'Guest DJ', dress:'Rooftop casual', tags:['Guest DJ','Sunset set'], desc:'Sunset listening sessions across Amapiano, Highlife, Afrobeats, Soukous and their roots.', themes:'Amapiano\nHighlife\nAfrobeats\nSoukous and Rumba\nBongo Flava'}),
+    S('griot-cinema', {name:'Griot Cinema', format:'Screenings', cadence:'every 2 weeks', weekday:'Sunday', time:'5:30 PM', room:'The Great Room', capacity:40, held:4, curator:'House Programming', dress:'Casual', tags:['Screening','Talkback'], desc:'African and Diaspora film, followed by a talkback with the filmmaker or a guest critic.', themes:'Nollywood classics\nDocumentary from the continent\nShort film showcase\nAfro-Caribbean cinema\nBlack British cinema\nEast African cinema'}),
+    S('pitch-and-pinot', {name:'Pitch & Pinot', format:'Business', cadence:'monthly', weekday:'Thursday', weekOfMonth:'last', time:'7:00 PM', room:'The Griot Pit', capacity:30, held:3, curator:'Three Founding Members', dress:'Smart casual', tags:['3 pitches','Mentorship only'], desc:'Three members pitch a project to the room for candid feedback. No funding changes hands, only mentorship.'}),
+    S('elders-council-tea', {name:"Elders' Council Tea", format:'Family & Elders', cadence:'monthly', weekday:'Sunday', weekOfMonth:'2nd', time:'3:00 PM', room:"Elders' Parlor", capacity:16, held:2, curator:'Club Manager', dress:'Sunday best', tags:['Buna service','Warm room'], desc:'A quiet sitting for members bringing parents or grandparents, with Buna and mint tea in a warmer room.'}),
+    S('genealogy-circle', {name:'The Genealogy Circle', format:'Family & Elders', cadence:'monthly', weekday:'Saturday', weekOfMonth:'3rd', time:'6:00 PM', room:'Library & Digital Archive', capacity:14, held:1, curator:'In-House Genealogist', dress:'Casual', tags:['DNA results','Records gap'], desc:'Bring your DNA results and what you have. Leave with your next three research steps.'}),
+    H('heritage-bhm', 'Black History Month Opening Night', '02-01', 'Opening night for Black History Month: readings, music and a toast to the year ahead.'),
+    H('heritage-ghana', 'Ghana Independence Day', '03-06', "Celebrating Ghana's independence with highlife, jollof and a talk on Pan-African history."),
+    H('heritage-africa-day', 'Africa Day', '05-25', 'Africa Day, marking the founding of the OAU in 1963: food, music and conversation from across the continent.'),
+    H('heritage-juneteenth', 'Juneteenth', '06-19', 'A gathering of remembrance and celebration with a communal meal and storytelling.'),
+    H('heritage-emancipation', 'Emancipation Day', '08-01', 'Honoring the abolition of slavery across the British Empire in 1834, with Caribbean and African voices.'),
+    H('heritage-sa', 'Heritage Day: South Africa', '09-24', "South Africa's Heritage Day, celebrated around the braai with music and poetry."),
+    H('heritage-nigeria', 'Nigeria Independence Day', '10-01', "Celebrating Nigeria's independence with live music and a tasting menu."),
+    H('heritage-uganda', 'Uganda Independence Day', '10-09', "Celebrating Uganda's independence with Ugandan food, music and a Luganda language table."),
+    H('heritage-kenya', 'Jamhuri Day: Kenya', '12-12', "Celebrating Kenya's independence and republic with nyama choma and live music."),
+    H('heritage-kwanzaa', 'Kwanzaa Opening Night', '12-26', 'Lighting the first candle with the seven principles and a communal feast.'),
+  ];
+}
+function dhSeriesAction(action, el){
+  if(action==='series-starter'){
+    const have = new Set(state.data.series.map(s=>s.id)); let added = 0;
+    srsStarterList().forEach(s=>{ if(have.has(s.id)) return; state.data.series.push(touch(Object.assign(s,{createdAt:new Date().toISOString()}))); added++; });
+    if(added){ persist('series'); logActivity('added','series',`${added} starter series`); }
+    const made = srsGenerate();
+    toast(added ? `Added ${added} series and ${made} upcoming events.` : (made ? `Series were already loaded. Added ${made} upcoming events.` : 'The starter calendar is already loaded.'));
+    render(); return true;
+  }
+  if(action==='series-generate'){
+    const made = srsGenerate();
+    toast(made ? `Added ${made} upcoming event${made===1?'':'s'}.` : 'Nothing new to add. The calendar is already up to date.');
+    render(); return true;
+  }
+  if(action==='series-refresh'){
+    const s = state.data.series.find(x=>x.id===el.dataset.id); if(!s) return true;
+    const today = localISO(new Date()); let n = 0;
+    state.data.events.filter(e=>e.seriesId===s.id && e.status!=='cancelled' && String(e.date)>=today).forEach(e=>{ Object.assign(e, srsEventFields(s)); touch(e); n++; });
+    if(n){ persist('events'); logActivity('updated','events',`${n} upcoming events from ${s.name}`); }
+    toast(n ? `Updated ${n} upcoming event${n===1?'':'s'} (names and cancellations kept).` : 'No upcoming events from this series to update.');
+    render(); return true;
+  }
+  return false;
+}
+SCHEMAS.series = {
+  label:'Series', plural:'Programming Series', icon:'events', idPrefix:'srs',
+  fields:[
+    {key:'name', label:'Series name', type:'text', required:true},
+    {key:'format', label:'Format', type:'select', options:SRS_FORMATS},
+    {key:'cadence', label:'How often', type:'select', options:SRS_CADENCES},
+    {key:'weekday', label:'Day of the week (weekly, every 2 weeks, monthly)', type:'select', options:SRS_WEEKDAYS},
+    {key:'weekOfMonth', label:'Which one (monthly only)', type:'select', options:SRS_NTH},
+    {key:'monthDay', label:'Date each year as MM-DD (annual only)', type:'text'},
+    {key:'time', label:'Time', type:'text'},
+    {key:'room', label:'Room', type:'text'},
+    {key:'location', label:'House', type:'select', options:()=>[SRS_ALL,'—',...cityOptions()]},
+    {key:'capacity', label:'Capacity', type:'number'},
+    {key:'held', label:'Held for Empty Chair Rule', type:'number'},
+    {key:'ticketPrice', label:'Ticket price per seat ($, 0 = included with membership)', type:'number'},
+    {key:'curator', label:'Curator / host', type:'text'},
+    {key:'dress', label:'Dress code', type:'text'},
+    {key:'tags', label:'Tags (comma separated)', type:'tags'},
+    {key:'desc', label:'Description', type:'textarea'},
+    {key:'themes', label:'Rotating themes, one per line (optional)', type:'textarea'},
+    {key:'startDate', label:'Starts on (optional)', type:'date'},
+    {key:'endDate', label:'Ends on (optional)', type:'date'},
+    {key:'horizonWeeks', label:'Schedule this many weeks ahead (0 = 8)', type:'number'},
+    {key:'status', label:'Status', type:'select', options:['active','paused']},
+  ],
+  columns:[
+    {header:'Series', sortKey:'name', render:s=>`<div class="rowtitle">${esc(s.name)}</div><div class="rowsub">${esc(s.format||'—')} · ${esc(srsCadenceLabel(s))}</div>`},
+    {header:'Where', render:s=>`${esc(s.room||'—')}<div class="rowsub">${esc(s.location||'—')}</div>`},
+    {header:'Seats', render:s=>`${Number(s.capacity)||0} (${Number(s.held)||0} held)`, num:true},
+    {header:'Next', render:s=>{ const n = srsNext(s); return n ? esc(new Date(n+'T12:00:00').toLocaleDateString([], {weekday:'short', month:'short', day:'numeric'})) : '—'; }},
+    {header:'Status', sortKey:'status', render:s=>`<span class="badge ${s.status==='paused'?'pending':'active'}">${esc(s.status||'active')}</span>`},
+  ],
+  searchFields:['name','format','room','cadence'],
+};
+STRIPS.series = function(){
+  const today = localISO(new Date()), soon = new Date(); soon.setDate(soon.getDate()+56);
+  const active = state.data.series.filter(s=>s.status!=='paused');
+  const soonN = (state.data.events||[]).filter(e=>e.seriesId && e.status!=='cancelled' && String(e.date)>=today && String(e.date)<=localISO(soon)).length;
+  const btns = canWrite('series') ? `<button class="btn btn-primary btn-sm" data-action="series-generate">Generate upcoming events</button> <button class="btn btn-ghost btn-sm" data-action="series-starter">Load the starter calendar</button>` : '';
+  const weekly = active.filter(s=>s.cadence!=='annual');
+  const rhythm = SRS_WEEKDAYS.map(d=>{ const list = weekly.filter(s=>s.weekday===d); return list.length ? `<div style="min-width:130px;"><div class="mono" style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ochre-2);margin-bottom:4px;">${d.slice(0,3)}</div>${list.map(s=>`<div style="font-size:12.5px;color:var(--text);margin-bottom:3px;">${esc(s.name)}<span style="color:var(--text-faint);"> · ${esc(s.time||'')}${s.cadence==='monthly'?' · '+esc(s.weekOfMonth||'1st'):s.cadence==='every 2 weeks'?' · alt weeks':''}</span></div>`).join('')}</div>` : ''; }).join('');
+  return `<div class="panel" style="margin-bottom:16px;padding:16px 18px;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;">
+      <div style="max-width:620px;"><div style="color:var(--text);font-size:13.5px;margin-bottom:4px;">${active.length} active series · ${soonN} event${soonN===1?'':'s'} on the calendar for the next 8 weeks</div>
+      <div style="color:var(--text-faint);font-size:12px;">Series are the rhythm of the House. Generating creates the real events members see and RSVP to. To skip one night, cancel that event rather than deleting it. After changing a series, use the refresh arrow on its row to update its upcoming events.</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">${btns}</div>
+    </div>
+    ${rhythm ? `<div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line);">${rhythm}</div>` : ''}
+  </div>`;
+};
 
 async function bootGate(){
   if(authMode()){
